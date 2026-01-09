@@ -1,0 +1,57 @@
+{
+  "name": "azure-pentest-mcp",
+  "version": "1.8.0",
+  "description": "Azure Penetration Testing MCP Server - 33 Professional Security Assessment Tools",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
+  },
+  "dependencies": {
+    "@azure/arm-authorization": "^9.0.0",
+    "@azure/arm-compute": "^23.2.0",
+    "@azure/arm-containerregistry": "^11.0.0",
+    "@azure/arm-containerservice": "^24.0.0",
+    "@azure/arm-cosmosdb": "^16.4.0",
+    "@azure/arm-keyvault": "^4.0.0",
+    "@azure/arm-network": "^35.0.0",
+    "@azure/arm-resources": "^5.2.0",
+    "@azure/arm-sql": "^10.0.0",
+    "@azure/arm-storage": "^19.1.0",
+    "@azure/arm-subscriptions": "^5.1.0",
+    "@azure/identity": "^4.0.0",
+    "@azure/storage-blob": "^12.29.1",
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@types/pdfkit": "^0.17.4",
+    "azure-devops-node-api": "^15.1.1",
+    "csv-writer": "^1.6.0",
+    "marked": "^17.0.1",
+    "pdfkit": "^0.17.2"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.11.5",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.2",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "jest": {
+    "preset": "ts-jest/presets/default-esm",
+    "testEnvironment": "node",
+    "extensionsToTreatAsEsm": [".ts"],
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
+    "transform": {
+      "^.+\\.ts$": ["ts-jest", { "useESM": true }]
+    },
+    "testMatch": ["**/tests/**/*.test.ts"],
+    "collectCoverageFrom": ["src/**/*.ts", "!src/**/*.d.ts"]
+  }
+}
