@@ -1151,7 +1151,7 @@ scan_aks_clusters subscriptionId="YOUR_SUB"
 
 ### DEVOPS TOOLS (25)
 
-### 25. scan_azure_devops ⭐ NEW
+### 25. scan_azure_devops [NEW]
 **Description:** Azure DevOps security scanner (Phase 5)
 **Use Cases:**
   - Scan repositories for sensitive files (.env, secrets, credentials)
@@ -1167,7 +1167,7 @@ scan_aks_clusters subscriptionId="YOUR_SUB"
   - CRITICAL: password[:=], connectionString[:=], apiKey[:=]
   - HIGH: secret[:=], token[:=]
 **Example:**
-  organizationUrl: "https://dev.azure.com/siemens-healthineers"
+  organizationUrl: "https://dev.azure.com/your-organization"
   personalAccessToken: "YOUR_PAT_TOKEN"
   scanRepositories: true
   scanPipelines: true
@@ -1282,19 +1282,19 @@ Common errors and solutions:
 - Best for: API integration, automation, parsing
 - Output: JSON object with findings array
 
-### HTML ⭐ NEW
+### HTML [NEW]
 - Interactive dashboard with styling
 - Best for: Browser viewing, team sharing, stakeholders
 - Features: Color-coded severity, sortable table, hover effects
 - Output: Full HTML5 document with embedded CSS
 
-### PDF ⭐ NEW
+### PDF [NEW]
 - Professional deliverable report
 - Best for: Executive presentations, client reports, compliance
 - Features: Title page, metadata, executive summary, findings by category
 - Output: PDF file (requires outputFile parameter)
 
-### CSV ⭐ NEW
+### CSV [NEW]
 - Excel-ready data export
 - Best for: Data analysis, pivot tables, tracking remediation
 - Features: Severity, Category, Resource, Finding columns
@@ -1319,12 +1319,12 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
 ## Last Updated: December 7, 2025
 
 **Recent Updates:**
-- ✅ Azure DevOps security scanning (scan_azure_devops)
-- ✅ PDF/HTML/CSV report export formats
-- ✅ Deep storage container scanning
-- ✅ AKS offensive security tools (4 tools)
-- ✅ Attack path analysis
-- ✅ Managed identity enumeration
+- [OK] Azure DevOps security scanning (scan_azure_devops)
+- [OK] PDF/HTML/CSV report export formats
+- [OK] Deep storage container scanning
+- [OK] AKS offensive security tools (4 tools)
+- [OK] Attack path analysis
+- [OK] Managed identity enumeration
 
 **Dependencies:**
 - 201 npm packages installed
@@ -2479,7 +2479,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
 
         // Note: Service principals are tenant-level, requires Microsoft Graph API
         // This is a placeholder that shows the concept
-        const message = `# Service Principal Enumeration\n\n⚠️ This tool requires Microsoft Graph API permissions.\n\nTo enumerate service principals, you need:\n1. Microsoft.Graph PowerShell module or Graph API access\n2. Application.Read.All or Directory.Read.All permissions\n\nExample PowerShell commands:\n\`\`\`powershell\nConnect-MgGraph -Scopes "Application.Read.All"\nGet-MgServicePrincipal -All\n\`\`\`\n\nThis feature will be enhanced in future versions with proper Graph API integration.`;
+        const message = `# Service Principal Enumeration\n\n[WARN] This tool requires Microsoft Graph API permissions.\n\nTo enumerate service principals, you need:\n1. Microsoft.Graph PowerShell module or Graph API access\n2. Application.Read.All or Directory.Read.All permissions\n\nExample PowerShell commands:\n\`\`\`powershell\nConnect-MgGraph -Scopes "Application.Read.All"\nGet-MgServicePrincipal -All\n\`\`\`\n\nThis feature will be enhanced in future versions with proper Graph API integration.`;
 
         return {
           content: [
@@ -2900,10 +2900,10 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         report += `**Scan Date:** ${findings.scanDate}\n\n`;
         report += `## Executive Summary\n\n`;
         report += `**Total Findings:** ${findings.summary.totalFindings}\n`;
-        report += `- 🔴 **CRITICAL:** ${findings.summary.critical}\n`;
-        report += `- 🟠 **HIGH:** ${findings.summary.high}\n`;
-        report += `- 🟡 **MEDIUM:** ${findings.summary.medium}\n`;
-        report += `- 🟢 **LOW:** ${findings.summary.low}\n\n`;
+        report += `- [CRITICAL] **CRITICAL:** ${findings.summary.critical}\n`;
+        report += `- [HIGH] **HIGH:** ${findings.summary.high}\n`;
+        report += `- [MEDIUM] **MEDIUM:** ${findings.summary.medium}\n`;
+        report += `- [LOW] **LOW:** ${findings.summary.low}\n\n`;
 
         report += `## Risk Assessment\n\n`;
         const overallRisk = findings.summary.critical > 0 ? "CRITICAL" : findings.summary.high > 0 ? "HIGH" : "MEDIUM";
@@ -2937,10 +2937,10 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         if (withCompliance) {
           report += `## Compliance Framework Mapping\n\n`;
           report += `### CIS Azure Foundations Benchmark\n`;
-          report += `- **3.1** ✅ Ensure secure transfer (HTTPS) is enabled - ${findings.categories.storage?.findings.filter((f: any) => f.finding.includes("HTTPS")).length || 0} violations\n`;
-          report += `- **3.2** ✅ Ensure storage account access keys are periodically regenerated\n`;
-          report += `- **3.3** ✅ Ensure public network access is disabled for storage accounts - ${findings.categories.storage?.findings.filter((f: any) => f.finding.includes("Public")).length || 0} violations\n`;
-          report += `- **6.1** ✅ Ensure SQL server firewall rules do not allow 0.0.0.0-255.255.255.255 - ${findings.categories.sql?.findings.filter((f: any) => f.finding.includes("firewall")).length || 0} violations\n\n`;
+          report += `- **3.1** [CHECK] Ensure secure transfer (HTTPS) is enabled - ${findings.categories.storage?.findings.filter((f: any) => f.finding.includes("HTTPS")).length || 0} violations\n`;
+          report += `- **3.2** [CHECK] Ensure storage account access keys are periodically regenerated\n`;
+          report += `- **3.3** [CHECK] Ensure public network access is disabled for storage accounts - ${findings.categories.storage?.findings.filter((f: any) => f.finding.includes("Public")).length || 0} violations\n`;
+          report += `- **6.1** [CHECK] Ensure SQL server firewall rules do not allow 0.0.0.0-255.255.255.255 - ${findings.categories.sql?.findings.filter((f: any) => f.finding.includes("firewall")).length || 0} violations\n\n`;
 
           report += `### NIST Cybersecurity Framework\n`;
           report += `- **PR.AC-3**: Implement remote access management\n`;
@@ -2988,11 +2988,11 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
               });
               await csvWriter.writeRecords(csvData);
               return {
-                content: [{ type: "text", text: `✅ CSV report saved to: ${outputFile}\n\nTotal findings exported: ${csvData.length}` }],
+                content: [{ type: "text", text: `[OK] CSV report saved to: ${outputFile}\n\nTotal findings exported: ${csvData.length}` }],
               };
             } catch (error: any) {
               return {
-                content: [{ type: "text", text: `❌ Failed to save CSV: ${error.message}\n\nCSV Data:\n${JSON.stringify(csvData, null, 2)}` }],
+                content: [{ type: "text", text: `[FAIL] Failed to save CSV: ${error.message}\n\nCSV Data:\n${JSON.stringify(csvData, null, 2)}` }],
               };
             }
           } else {
@@ -3031,7 +3031,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
 </head>
 <body>
   <div class="container">
-    <h1>🔐 Azure Security Assessment Report</h1>
+    <h1>Azure Security Assessment Report</h1>
     <div class="metadata">
       <p><strong>Subscription:</strong> ${subscriptionId}</p>
       <p><strong>Resource Group:</strong> ${findings.resourceGroup}</p>
@@ -3041,10 +3041,10 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
     <div class="summary">
       <h2>Executive Summary</h2>
       <p><strong>Total Findings:</strong> ${findings.summary.totalFindings}</p>
-      <p class="critical">🔴 CRITICAL: ${findings.summary.critical}</p>
-      <p class="high">🟠 HIGH: ${findings.summary.high}</p>
-      <p class="medium">🟡 MEDIUM: ${findings.summary.medium}</p>
-      <p class="low">🟢 LOW: ${findings.summary.low}</p>
+      <p class="critical">[CRITICAL] CRITICAL: ${findings.summary.critical}</p>
+      <p class="high">[HIGH] HIGH: ${findings.summary.high}</p>
+      <p class="medium">[MEDIUM] MEDIUM: ${findings.summary.medium}</p>
+      <p class="low">[LOW] LOW: ${findings.summary.low}</p>
     </div>
 
     <h2>Findings by Category</h2>
@@ -3075,11 +3075,11 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             try {
               fs.writeFileSync(outputFile, htmlReport, 'utf-8');
               return {
-                content: [{ type: "text", text: `✅ HTML report saved to: ${outputFile}\n\nOpen in browser to view the interactive dashboard.` }],
+                content: [{ type: "text", text: `[OK] HTML report saved to: ${outputFile}\n\nOpen in browser to view the interactive dashboard.` }],
               };
             } catch (error: any) {
               return {
-                content: [{ type: "text", text: `❌ Failed to save HTML: ${error.message}` }],
+                content: [{ type: "text", text: `[FAIL] Failed to save HTML: ${error.message}` }],
               };
             }
           } else {
@@ -3093,7 +3093,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         if (outputFormat === "pdf") {
           if (!outputFile) {
             return {
-              content: [{ type: "text", text: `❌ PDF export requires outputFile parameter.\n\nExample: outputFile="C:\\\\reports\\\\security-report.pdf"` }],
+              content: [{ type: "text", text: `[FAIL] PDF export requires outputFile parameter.\n\nExample: outputFile="C:\\\\reports\\\\security-report.pdf"` }],
               isError: true,
             };
           }
@@ -3119,10 +3119,10 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             doc.moveDown(0.5);
             doc.fontSize(12)
               .text(`Total Findings: ${findings.summary.totalFindings}`)
-              .fillColor('#d13438').text(`🔴 CRITICAL: ${findings.summary.critical}`)
-              .fillColor('#ff8c00').text(`🟠 HIGH: ${findings.summary.high}`)
-              .fillColor('#f4c430').text(`🟡 MEDIUM: ${findings.summary.medium}`)
-              .fillColor('#107c10').text(`🟢 LOW: ${findings.summary.low}`);
+              .fillColor('#d13438').text(`[CRITICAL] CRITICAL: ${findings.summary.critical}`)
+              .fillColor('#ff8c00').text(`[HIGH] HIGH: ${findings.summary.high}`)
+              .fillColor('#f4c430').text(`[MEDIUM] MEDIUM: ${findings.summary.medium}`)
+              .fillColor('#107c10').text(`[LOW] LOW: ${findings.summary.low}`);
             doc.moveDown(2);
 
             // Findings
@@ -3154,11 +3154,11 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             await new Promise<void>((resolve) => stream.on('finish', () => resolve()));
 
             return {
-              content: [{ type: "text", text: `✅ PDF report saved to: ${outputFile}\n\n📄 Total findings: ${findings.summary.totalFindings}\n🔴 Critical: ${findings.summary.critical}\n🟠 High: ${findings.summary.high}` }],
+              content: [{ type: "text", text: `[OK] PDF report saved to: ${outputFile}\n\nTotal findings: ${findings.summary.totalFindings}\n[CRITICAL] Critical: ${findings.summary.critical}\n[HIGH] High: ${findings.summary.high}` }],
             };
           } catch (error: any) {
             return {
-              content: [{ type: "text", text: `❌ Failed to generate PDF: ${error.message}` }],
+              content: [{ type: "text", text: `[FAIL] Failed to generate PDF: ${error.message}` }],
               isError: true,
             };
           }
@@ -3432,7 +3432,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
               return {
                 content: [{
                   type: "text",
-                  text: `❌ **FAILED to retrieve admin credentials**\n\nError: ${error.message}\n\nThis usually means you lack the required Azure RBAC permission:\n- **Required Role:** Azure Kubernetes Service Cluster Admin\n\nTry with user credentials instead (set adminAccess=false).`
+                  text: `[FAIL] **FAILED to retrieve admin credentials**\n\nError: ${error.message}\n\nThis usually means you lack the required Azure RBAC permission:\n- **Required Role:** Azure Kubernetes Service Cluster Admin\n\nTry with user credentials instead (set adminAccess=false).`
                 }],
                 isError: true,
               };
@@ -3462,7 +3462,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           report += `- **API Server:** ${apiServerUrl}\n`;
           report += `- **Kubernetes Version:** ${cluster.kubernetesVersion}\n`;
           report += `- **Location:** ${cluster.location}\n`;
-          report += `- **Private Cluster:** ${cluster.apiServerAccessProfile?.enablePrivateCluster ? "✅ Yes" : "❌ No (PUBLIC)"}\n\n`;
+          report += `- **Private Cluster:** ${cluster.apiServerAccessProfile?.enablePrivateCluster ? "[OK] Yes" : "[FAIL] No (PUBLIC)"}\n\n`;
           
           report += `## Identity Configuration\n`;
           if (cluster.identity?.type === "SystemAssigned") {
@@ -3526,16 +3526,16 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           
           report += `## Security Findings\n`;
           if (!cluster.apiServerAccessProfile?.enablePrivateCluster) {
-            report += `- ❌ **CRITICAL:** API server is PUBLIC - accessible from Internet\n`;
+            report += `- [FAIL] **CRITICAL:** API server is PUBLIC - accessible from Internet\n`;
           }
           if (!cluster.enableRbac) {
-            report += `- ❌ **CRITICAL:** RBAC is DISABLED - any authenticated user has cluster-admin\n`;
+            report += `- [FAIL] **CRITICAL:** RBAC is DISABLED - any authenticated user has cluster-admin\n`;
           }
           if (cluster.servicePrincipalProfile?.clientId && cluster.servicePrincipalProfile.clientId !== "msi") {
-            report += `- ⚠️ **HIGH:** Using Service Principal (consider migrating to Managed Identity)\n`;
+            report += `- [WARN] **HIGH:** Using Service Principal (consider migrating to Managed Identity)\n`;
           }
           if (!cluster.aadProfile?.managed) {
-            report += `- ⚠️ **MEDIUM:** Azure AD integration not enabled\n`;
+            report += `- [WARN] **MEDIUM:** Azure AD integration not enabled\n`;
           }
 
           return {
@@ -3610,7 +3610,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
               report += `- **Type:** Managed Service Identity (MSI)\n\n`;
             } else {
               report += `- **Type:** Standard Service Principal\n`;
-              report += `- ⚠️ **Security Risk:** Service principals use secrets that can be stolen\n\n`;
+              report += `- [WARN] **Security Risk:** Service principals use secrets that can be stolen\n\n`;
             }
           }
           
@@ -3719,33 +3719,33 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             
             // Check OS disk encryption
             if (!pool.enableEncryptionAtHost) {
-              report += `- ❌ **HIGH:** Host encryption NOT enabled - OS and temp disks not encrypted at rest\n`;
+              report += `- [FAIL] **HIGH:** Host encryption NOT enabled - OS and temp disks not encrypted at rest\n`;
             } else {
-              report += `- ✅ Host encryption enabled\n`;
+              report += `- [OK] Host encryption enabled\n`;
             }
             
             // Check FIPS
             if (!pool.enableFips) {
-              report += `- ⚠️ **MEDIUM:** FIPS not enabled (required for compliance workloads)\n`;
+              report += `- [WARN] **MEDIUM:** FIPS not enabled (required for compliance workloads)\n`;
             }
             
             // Check auto-upgrade
             if (pool.enableAutoScaling) {
-              report += `- ✅ Auto-scaling enabled (${pool.minCount}-${pool.maxCount} nodes)\n`;
+              report += `- [OK] Auto-scaling enabled (${pool.minCount}-${pool.maxCount} nodes)\n`;
             } else {
-              report += `- ⚠️ **MEDIUM:** Auto-scaling disabled - manual scaling required\n`;
+              report += `- [WARN] **MEDIUM:** Auto-scaling disabled - manual scaling required\n`;
             }
             
             // Check ultra SSD
             if (pool.enableUltraSSD) {
-              report += `- ℹ️ Ultra SSD enabled\n`;
+              report += `- [INFO] Ultra SSD enabled\n`;
             }
             
             // Check node public IP
             if (pool.enableNodePublicIP) {
-              report += `- ❌ **CRITICAL:** Nodes have PUBLIC IPs - direct Internet exposure\n`;
+              report += `- [FAIL] **CRITICAL:** Nodes have PUBLIC IPs - direct Internet exposure\n`;
             } else {
-              report += `- ✅ Nodes do not have public IPs\n`;
+              report += `- [OK] Nodes do not have public IPs\n`;
             }
             
             report += `\n`;
@@ -3763,9 +3763,9 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
               
               // Check VM encryption
               if (vm.storageProfile?.osDisk?.encryptionSettings?.enabled) {
-                report += `- ✅ OS Disk encrypted\n`;
+                report += `- [OK] OS Disk encrypted\n`;
               } else {
-                report += `- ❌ **HIGH:** OS Disk NOT encrypted\n`;
+                report += `- [FAIL] **HIGH:** OS Disk NOT encrypted\n`;
               }
               
               // Check data disks
@@ -3873,8 +3873,8 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           report += `curl -v -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01"\n\`\`\`\n\n`;
           
           report += `**Expected Results:**\n`;
-          report += `- ✅ **If accessible:** JSON response with VM metadata → IMDS is reachable (HIGH RISK)\n`;
-          report += `- ❌ **If blocked:** Connection timeout/refused → IMDS properly restricted\n\n`;
+          report += `- [OK] **If accessible:** JSON response with VM metadata -> IMDS is reachable (HIGH RISK)\n`;
+          report += `- [FAIL] **If blocked:** Connection timeout/refused -> IMDS properly restricted\n\n`;
           
           report += `### Step 4: Extract Managed Identity Token (if IMDS accessible)\n\`\`\`bash\n`;
           report += `# Get token for Azure Resource Manager\n`;
@@ -3908,12 +3908,12 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           report += `## Risk Assessment\n\n`;
           
           if (!cluster.networkProfile?.networkPolicy) {
-            report += `### ❌ CRITICAL: No Network Policy Configured\n`;
+            report += `### [FAIL] CRITICAL: No Network Policy Configured\n`;
             report += `- Pods can freely access IMDS endpoint\n`;
             report += `- Any compromised pod = instant managed identity token theft\n`;
             report += `- Attacker can access Azure resources based on identity's RBAC\n\n`;
           } else {
-            report += `### ✅ Network Policy Enabled: ${cluster.networkProfile.networkPolicy}\n`;
+            report += `### [OK] Network Policy Enabled: ${cluster.networkProfile.networkPolicy}\n`;
             report += `- Network policies can restrict IMDS access\n`;
             report += `- **Must verify** that policies actually block 169.254.169.254\n\n`;
           }
@@ -4072,7 +4072,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                           remediation: 'Review file contents for hardcoded secrets',
                         });
                         highCount++;
-                        report += `- ⚠️ **HIGH**: Sensitive file found: ${item.path}\n`;
+                        report += `- [WARN] **HIGH**: Sensitive file found: ${item.path}\n`;
                       }
                     }
                   } catch (e: any) {
@@ -4121,7 +4121,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                       if (severity === 'CRITICAL') criticalCount++;
                       else if (severity === 'HIGH') highCount++;
 
-                      report += `- ❌ **${severity}**: ${name} found in pipeline "${definition.name}"\n`;
+                      report += `- [FAIL] **${severity}**: ${name} found in pipeline "${definition.name}"\n`;
                     }
                   }
 
@@ -4159,7 +4159,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                     remediation: 'Migrate to service principal or managed identity',
                   });
                   highCount++;
-                  report += `- ⚠️ **HIGH**: Service connection "${endpoint.name}" uses username/password auth\n`;
+                  report += `- [WARN] **HIGH**: Service connection "${endpoint.name}" uses username/password auth\n`;
                 }
 
                 // Check for overly broad permissions
@@ -4184,9 +4184,9 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
 
           report += `## Summary\n\n`;
           report += `- **Total Findings:** ${findings.length}\n`;
-          report += `- 🔴 **CRITICAL:** ${criticalCount}\n`;
-          report += `- 🟠 **HIGH:** ${highCount}\n`;
-          report += `- 🟡 **MEDIUM:** ${mediumCount}\n\n`;
+          report += `- [CRITICAL] **CRITICAL:** ${criticalCount}\n`;
+          report += `- [HIGH] **HIGH:** ${highCount}\n`;
+          report += `- [MEDIUM] **MEDIUM:** ${mediumCount}\n\n`;
 
           report += `## Security Recommendations\n\n`;
           report += `### Immediate Actions\n`;
@@ -4387,7 +4387,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           }
           
           if (criticalRules.length > 0) {
-            report += `### 🔴 CRITICAL Findings\n\n`;
+            report += `### [CRITICAL] CRITICAL Findings\n\n`;
             for (const rule of criticalRules) {
               report += `- ${rule}\n`;
             }
@@ -4395,7 +4395,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           }
           
           if (highRules.length > 0) {
-            report += `### 🟠 HIGH Risk Rules\n\n`;
+            report += `### [HIGH] HIGH Risk Rules\n\n`;
             for (const rule of highRules) {
               report += `- ${rule}\n`;
             }
@@ -4403,7 +4403,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           }
           
           if (criticalRules.length === 0 && highRules.length === 0) {
-            report += `✅ No overly permissive NSG rules found\n\n`;
+            report += `[OK] No overly permissive NSG rules found\n\n`;
           }
           
           report += `## Firewall Best Practices\n\n`;
@@ -4509,7 +4509,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           }
           
           if (escalationPaths.length > 0) {
-            report += `### ⚠️ Potential Escalation Paths\n\n`;
+            report += `### [WARN] Potential Escalation Paths\n\n`;
             for (const path of escalationPaths.slice(0, 20)) {
               report += `- ${path}\n`;
             }
@@ -4517,7 +4517,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
               report += `\n...and ${escalationPaths.length - 20} more\n`;
             }
           } else {
-            report += `✅ No obvious escalation paths found\n`;
+            report += `[OK] No obvious escalation paths found\n`;
           }
           
           report += `\n## Common RBAC Privilege Escalation Techniques\n\n`;
@@ -4713,11 +4713,11 @@ kubectl get sa default -o yaml | grep -A5 automountServiceAccountToken
 ## Cluster Security Configuration
 | Setting | Status |
 |---------|--------|
-| Workload Identity | ${cluster.securityProfile?.workloadIdentity?.enabled ? '✅ Enabled' : '❌ Disabled'} |
-| OIDC Issuer | ${cluster.oidcIssuerProfile?.enabled ? '✅ Enabled' : '❌ Disabled'} |
-| Azure AD Integration | ${cluster.aadProfile?.managed ? '✅ Enabled' : '❌ Disabled'} |
-| Pod Identity (Legacy) | ${cluster.podIdentityProfile?.enabled ? '⚠️ Legacy' : '➖ Not Used'} |
-| Private Cluster | ${cluster.apiServerAccessProfile?.enablePrivateCluster ? '✅ Yes' : '❌ No'} |
+| Workload Identity | ${cluster.securityProfile?.workloadIdentity?.enabled ? '[OK] Enabled' : '[FAIL] Disabled'} |
+| OIDC Issuer | ${cluster.oidcIssuerProfile?.enabled ? '[OK] Enabled' : '[FAIL] Disabled'} |
+| Azure AD Integration | ${cluster.aadProfile?.managed ? '[OK] Enabled' : '[FAIL] Disabled'} |
+| Pod Identity (Legacy) | ${cluster.podIdentityProfile?.enabled ? '[WARN] Legacy' : '[-] Not Used'} |
+| Private Cluster | ${cluster.apiServerAccessProfile?.enablePrivateCluster ? '[OK] Yes' : '[FAIL] No'} |
 
 ## Findings
 
@@ -4781,10 +4781,10 @@ ${saAnalysisCommands}`;
 ## Cluster Secret Configuration
 | Feature | Status |
 |---------|--------|
-| Key Vault CSI Driver | ${kvCsiEnabled ? '✅ Enabled' : '❌ Disabled'} |
-| Azure AD Integration | ${cluster.aadProfile?.managed ? '✅ Enabled' : '❌ Disabled'} |
-| Workload Identity | ${cluster.securityProfile?.workloadIdentity?.enabled ? '✅ Enabled' : '❌ Disabled'} |
-| Disk Encryption | ${cluster.diskEncryptionSetID ? '✅ Enabled' : '❌ Default'} |
+| Key Vault CSI Driver | ${kvCsiEnabled ? '[OK] Enabled' : '[FAIL] Disabled'} |
+| Azure AD Integration | ${cluster.aadProfile?.managed ? '[OK] Enabled' : '[FAIL] Disabled'} |
+| Workload Identity | ${cluster.securityProfile?.workloadIdentity?.enabled ? '[OK] Enabled' : '[FAIL] Disabled'} |
+| Disk Encryption | ${cluster.diskEncryptionSetID ? '[OK] Enabled' : '[FAIL] Default'} |
 
 ---
 
@@ -4828,7 +4828,7 @@ cat /proc/1/environ | tr '\\0' '\\n' | grep -iE "password|secret|token"
 
 ### 3. Azure Key Vault Secrets (TC-AKSSEC-003)
 **Risk:** HIGH | **MITRE:** T1552.005 - Cloud Instance Metadata API
-**Key Vault CSI Status:** ${kvCsiEnabled ? '✅ Enabled - Check SecretProviderClass' : '❌ Disabled - May use IMDS'}
+**Key Vault CSI Status:** ${kvCsiEnabled ? '[OK] Enabled - Check SecretProviderClass' : '[FAIL] Disabled - May use IMDS'}
 
 \`\`\`bash
 # Find SecretProviderClass resources
@@ -4995,24 +4995,24 @@ async function main() {
   
   // Display welcome message
   console.error("\n" + "=".repeat(70));
-  console.error("🔐 Azure Penetration Testing MCP Server - Professional Edition");
+  console.error("Azure Penetration Testing MCP Server - Professional Edition");
   console.error("=".repeat(70));
-  console.error("\n✅ Server Status: Running");
-  console.error("📡 Transport: stdio");
-  console.error("🔧 Version: 1.6.0 (Phase 5 - DevOps & Export Formats)");
-  console.error("\n📋 Available Tools (25):");
-  console.error("\n  📚 Phase 1 - Core Enumeration:");
+  console.error("\n[OK] Server Status: Running");
+  console.error("Transport: stdio");
+  console.error("Version: 1.8.0 (Phase 5 - DevOps & Export Formats)");
+  console.error("\nAvailable Tools (33):");
+  console.error("\n  Phase 1 - Core Enumeration:");
   console.error("   1. help                      - Comprehensive usage guide");
   console.error("   2. enumerate_subscriptions   - List Azure subscriptions");
   console.error("   3. enumerate_resource_groups - List resource groups");
   console.error("   4. enumerate_resources       - List resources (with filters)");
   console.error("   5. get_resource_details      - Detailed resource config");
-  console.error("\n  🔥 Phase 1 - Network & Storage Security:");
+  console.error("\n  Phase 1 - Network & Storage Security:");
   console.error("   6. analyze_storage_security  - Storage misconfiguration scanner");
   console.error("   7. analyze_nsg_rules         - Network exposure analyzer");
   console.error("   8. enumerate_public_ips      - Internet attack surface mapping");
   console.error("   9. enumerate_rbac_assignments - Access control auditing");
-  console.error("\n  🚀 Phase 2 - Database, Secrets, Compute, Container:");
+  console.error("\n  Phase 2 - Database, Secrets, Compute, Container:");
   console.error("   10. scan_sql_databases        - SQL security & TDE encryption");
   console.error("   11. check_key_vault_security  - Key Vault configuration audit");
   console.error("   12. analyze_cosmos_db_security- Cosmos DB exposure checker");
@@ -5022,25 +5022,25 @@ async function main() {
   console.error("   16. enumerate_service_principals - Service principal audit");
   console.error("   17. enumerate_managed_identities - Managed identity mapping");
   console.error("   18. scan_storage_containers   - Deep blob/container scanner");
-  console.error("\n  📊 Phase 3 - Advanced Analysis:");
+  console.error("\n  Phase 3 - Advanced Analysis:");
   console.error("   19. generate_security_report  - Comprehensive report generator");
   console.error("   20. analyze_attack_paths      - Exploitation chain mapping");
-  console.error("\n  ☸️ Phase 4 - AKS Offensive Security (NEW):");
+  console.error("\n  Phase 4 - AKS Offensive Security:");
   console.error("   21. get_aks_credentials       - Extract kubeconfig & admin access");
   console.error("   22. enumerate_aks_identities  - Map managed identities & RBAC");
   console.error("   23. scan_aks_node_security    - Node encryption & SSH analysis");
   console.error("   24. test_aks_imds_access      - IMDS exploitation testing");
-  console.error("\n  🔧 Phase 5 - DevOps & Export Formats (NEW):");
+  console.error("\n  Phase 5 - DevOps & Export Formats:");
   console.error("   25. scan_azure_devops         - Azure DevOps security scanner");
-  console.error("\n💡 Quick Start (Phase 5 - Export Formats):");
+  console.error("\n[TIP] Quick Start (Phase 5 - Export Formats):");
   console.error("   #sym:azure-pentest generate_security_report subscriptionId=\"SUB\" format=\"pdf\" outputFile=\"report.pdf\"");
   console.error("   #sym:azure-pentest generate_security_report subscriptionId=\"SUB\" format=\"html\" outputFile=\"report.html\"");
   console.error("   #sym:azure-pentest scan_azure_devops organizationUrl=\"https://dev.azure.com/yourorg\" personalAccessToken=\"PAT\"");
-  console.error("\n📖 Documentation:");
+  console.error("\nDocumentation:");
   console.error("   - QUICK_REFERENCE.md - Copy/paste commands");
   console.error("   - HACKTRICKS_TEST_CASES.md - Professional test scenarios");
-  console.error("\n🔑 Authentication: Using Azure CLI credentials (az login)");
-  console.error("🎯 Focus: 30+ vulnerability checks | DevOps scanning | PDF/HTML/CSV export");
+  console.error("\nAuthentication: Using Azure CLI credentials (az login)");
+  console.error("Focus: 33 vulnerability checks | DevOps scanning | PDF/HTML/CSV export");
   console.error("=".repeat(70) + "\n");
 }
 
