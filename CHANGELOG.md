@@ -5,6 +5,42 @@ All notable changes to Stratos (Azure Security Assessment MCP Server) will be do
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-01-10
+
+### Added
+
+#### Multi-Location Scanning (2 new tools)
+- **list_active_locations** - Discover which Azure locations have resources deployed
+  - Scans common (10 locations) or all (45+ locations) Azure regions
+  - Reports resource groups, VMs, storage accounts per location
+  - Quick reconnaissance for penetration testing
+  
+- **scan_all_locations** - Scan multiple Azure locations for specific resource types
+  - Supports: vms, storage, nsgs, aks, sql, keyvaults, public_ips, all
+  - Location presets: 'common' (10 regions), 'all' (45+ regions)
+  - Custom location filtering with comma-separated values
+  - Aggregated results grouped by location
+
+#### Location Filtering Support
+- Added `location` parameter to **enumerate_resource_groups**
+- Added `location` parameter to **enumerate_resources**
+- Support for single location, comma-separated list, 'common', or 'all'
+
+#### Azure Locations Constants
+- **AZURE_LOCATIONS** - 45+ global Azure regions
+  - Americas: eastus, eastus2, westus, westus2, westus3, centralus, etc.
+  - Europe: northeurope, westeurope, uksouth, ukwest, francecentral, etc.
+  - Asia Pacific: eastasia, southeastasia, australiaeast, japaneast, etc.
+  - Middle East & Africa: uaenorth, qatarcentral, southafricanorth, etc.
+- **COMMON_LOCATIONS** - 10 most frequently used regions
+
+### Changed
+- Total tools: **35** (up from 33)
+- Version: 1.9.0
+- Added helper functions: `resolveLocations()`, `filterByLocation()`
+
+---
+
 ## [1.8.0] - 2026-01-09
 
 ### Added
