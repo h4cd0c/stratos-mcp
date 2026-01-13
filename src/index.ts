@@ -28,11 +28,49 @@ import * as path from "path";
 // Initialize Azure credential
 const credential = new DefaultAzureCredential();
 
+// ========== AZURE LOCATIONS ==========
+// All Azure regions/locations
+const AZURE_LOCATIONS = [
+  // Americas
+  "eastus", "eastus2", "westus", "westus2", "westus3", "centralus", "northcentralus", "southcentralus", "westcentralus",
+  "canadacentral", "canadaeast", "brazilsouth", "brazilsoutheast",
+  // Europe
+  "northeurope", "westeurope", "uksouth", "ukwest", "francecentral", "francesouth",
+  "germanywestcentral", "germanynorth", "switzerlandnorth", "switzerlandwest",
+  "norwayeast", "norwaywest", "swedencentral", "polandcentral", "italynorth", "spaincentral",
+  // Asia Pacific
+  "eastasia", "southeastasia", "australiaeast", "australiasoutheast", "australiacentral", "australiacentral2",
+  "japaneast", "japanwest", "koreacentral", "koreasouth",
+  "centralindia", "southindia", "westindia", "jioindiawest", "jioindiacentral",
+  // Middle East & Africa
+  "uaenorth", "uaecentral", "qatarcentral", "southafricanorth", "southafricawest", "israelcentral"
+];
+
+// Common Azure locations (most used)
+const COMMON_LOCATIONS = [
+  "eastus", "eastus2", "westus2", "westeurope", "northeurope",
+  "southeastasia", "australiaeast", "uksouth", "centralindia", "japaneast"
+];
+
+// Helper to resolve locations from user input
+function resolveLocations(location?: string): string[] | null {
+  if (!location) return null; // No filter - return all
+  if (location.toLowerCase() === "all") return AZURE_LOCATIONS;
+  if (location.toLowerCase() === "common") return COMMON_LOCATIONS;
+  return location.split(",").map(l => l.trim().toLowerCase());
+}
+
+// Helper to filter resources by location
+function filterByLocation<T extends { location?: string }>(resources: T[], locations: string[] | null): T[] {
+  if (!locations) return resources; // No filter
+  return resources.filter(r => r.location && locations.includes(r.location.toLowerCase()));
+}
+
 // Create MCP server instance
 const server = new Server(
   {
     name: "stratos-mcp",
-    "version": "1.8.0",
+    "version": "1.9.0",
   },
   {
     capabilities: {
@@ -54,6 +92,48 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "list_active_locations",
+        description: "Discover which Azure locations have resources deployed. Quick scan to identify active regions before deep scanning. Checks resource groups, VMs, storage accounts, and AKS clusters.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            scanMode: {
+              type: "string",
+              enum: ["common", "all"],
+              description: "Preset scan mode: 'common' (10 locations) or 'all' (45+ locations). Default: common",
+            },
+          },
+          required: ["subscriptionId"],
+        },
+      },
+      {
+        name: "scan_all_locations",
+        description: "Scan multiple Azure locations for resources. Supports: vms, storage, nsgs, aks, sql, keyvaults, public_ips, all. Specify custom locations OR use presets ('common'=10 locations, 'all'=45+ locations).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceType: {
+              type: "string",
+              enum: ["vms", "storage", "nsgs", "aks", "sql", "keyvaults", "public_ips", "all"],
+              description: "Type of resource to scan: vms, storage, nsgs, aks, sql, keyvaults, public_ips, all",
+            },
+            locations: {
+              type: "string",
+              description: "Custom locations to scan (comma-separated). Examples: 'eastus' or 'eastus,westeurope,southeastasia'. Use 'common' for 10 main locations or 'all' for 45+ locations.",
+            },
+          },
+          required: ["subscriptionId", "resourceType"],
+        },
+      },
+      {
         name: "enumerate_subscriptions",
         description: "Enumerate all Azure subscriptions accessible with current credentials. Returns subscription ID, name, state, and tenant ID.",
         inputSchema: {
@@ -63,7 +143,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "enumerate_resource_groups",
-        description: "Enumerate all resource groups in a specific subscription. Returns name, location, ID, and tags.",
+        description: "Enumerate all resource groups in a specific subscription. Returns name, location, ID, and tags. Supports location filtering.",
         inputSchema: {
           type: "object",
           properties: {
@@ -71,13 +151,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Azure subscription ID (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)",
             },
+            location: {
+              type: "string",
+              description: "Filter by location(s): single (e.g., 'eastus'), multiple (e.g., 'eastus,westeurope'), or preset ('common', 'all')",
+            },
           },
           required: ["subscriptionId"],
         },
       },
       {
         name: "enumerate_resources",
-        description: "Enumerate all resources in a subscription or resource group. Can filter by resource type (e.g., VMs, storage, databases). Returns resource name, type, location, ID, and tags.",
+        description: "Enumerate all resources in a subscription or resource group. Can filter by resource type and location. Returns resource name, type, location, ID, and tags.",
         inputSchema: {
           type: "object",
           properties: {
@@ -92,6 +176,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             resourceType: {
               type: "string",
               description: "Optional: Filter by resource type (e.g., Microsoft.Storage/storageAccounts, Microsoft.Compute/virtualMachines, Microsoft.Network/networkSecurityGroups)",
+            },
+            location: {
+              type: "string",
+              description: "Filter by location(s): single (e.g., 'eastus'), multiple (e.g., 'eastus,westeurope'), or preset ('common', 'all')",
             },
           },
           required: ["subscriptionId"],
@@ -710,40 +798,73 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const helpText = `# Stratos - Azure Security Assessment MCP Server
 
 ## Overview
-This MCP server provides 33 comprehensive tools for Azure security assessment and penetration testing. All tools use your current Azure CLI credentials (az login).
+This MCP server provides 35 comprehensive tools for Azure security assessment and penetration testing. All tools use your current Azure CLI credentials (az login).
 
-**Version:** 1.8.0
-**Total Tools:** 33
-**Latest Features:** Azure DevOps security scanning, PDF/HTML/CSV report export
+**Version:** 1.9.0
+**Total Tools:** 35
+**Latest Features:** Multi-location scanning, location filtering, Azure DevOps security scanning, PDF/HTML/CSV report export
 
 ## Quick Start Examples
 
 \`\`\`bash
-# 1. Generate PDF security report
+# 1. Discover active Azure locations
+list_active_locations subscriptionId="YOUR_SUB" scanMode="common"
+
+# 2. Scan all locations for VMs
+scan_all_locations subscriptionId="YOUR_SUB" resourceType="vms" locations="all"
+
+# 3. Generate PDF security report
 generate_security_report subscriptionId="YOUR_SUB" format="pdf" outputFile="C:\\\\report.pdf"
 
-# 2. Scan Azure DevOps for secrets
-scan_azure_devops organizationUrl="https://dev.azure.com/org" personalAccessToken="PAT"
-
-# 3. Deep scan storage containers
-scan_storage_containers subscriptionId="YOUR_SUB"
-
-# 4. Check AKS cluster security
-scan_aks_clusters subscriptionId="YOUR_SUB"
+# 4. Filter resources by location
+enumerate_resources subscriptionId="YOUR_SUB" location="eastus,westeurope"
 \`\`\`
 
 ---
 
-## Available Tools (25)
+## Available Tools (35)
 
-### ENUMERATION TOOLS (1-9)
+### MULTI-LOCATION TOOLS (NEW!)
 
-### 1. help
+### 1. list_active_locations
+**Description:** Discover which Azure locations have resources deployed
+**Use Cases:**
+  - Quick reconnaissance to find active regions
+  - Identify where to focus deeper scans
+  - Map geographical footprint
+**Parameters:**
+  - subscriptionId (required): Azure subscription ID
+  - scanMode (optional): 'common' (10 locations) or 'all' (45+ locations)
+**Example:**
+  subscriptionId: "YOUR_SUB"
+  scanMode: "all"
+
+### 2. scan_all_locations
+**Description:** Scan multiple Azure locations for specific resource types
+**Use Cases:**
+  - Enumerate all VMs across regions
+  - Find storage accounts globally
+  - Discover AKS clusters in all locations
+**Resource Types:** vms, storage, nsgs, aks, sql, keyvaults, public_ips, all
+**Parameters:**
+  - subscriptionId (required): Azure subscription ID
+  - resourceType (required): Type of resource to scan
+  - locations (optional): 'common', 'all', or comma-separated list
+**Example:**
+  subscriptionId: "YOUR_SUB"
+  resourceType: "storage"
+  locations: "all"
+
+---
+
+### ENUMERATION TOOLS (3-11)
+
+### 3. help
 **Description:** Display this comprehensive help information
 **Usage:** Call this tool anytime to see available features and examples
 **Parameters:** None
 
-### 2. enumerate_subscriptions
+### 4. enumerate_subscriptions
 **Description:** List all Azure subscriptions you have access to
 **Use Cases:** 
   - Discover available target environments
@@ -753,13 +874,15 @@ scan_aks_clusters subscriptionId="YOUR_SUB"
 **Example Output:** Subscription ID, name, state, tenant ID
 **Best Practice:** Start here to identify which subscriptions to assess
 
-### 3. enumerate_resource_groups
+### 5. enumerate_resource_groups
 **Description:** List all resource groups within a subscription
 **Use Cases:**
   - Map organizational structure
   - Identify resource groupings for targeted assessment
   - Discover naming conventions and patterns
 **Parameters:**
+  - subscriptionId (required): Azure subscription ID
+  - location (optional): Filter by location(s) - single, comma-separated, 'common', or 'all'
   - subscriptionId (required): Azure subscription ID
 **Example:** 
   subscriptionId: "00000000-0000-0000-0000-000000000000"
@@ -1314,17 +1437,23 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
 
 ---
 
-## Version: 1.6.0 (Phase 5 - DevOps & Export Formats)
-## Total Tools: 25
-## Last Updated: December 7, 2025
+## Version: 1.9.0 (Multi-Location Scanning)
+## Total Tools: 35
+## Last Updated: January 2025
 
 **Recent Updates:**
+- [NEW] Multi-location scanning (list_active_locations, scan_all_locations)
+- [NEW] Location filtering for enumerate_resource_groups, enumerate_resources
 - [OK] Azure DevOps security scanning (scan_azure_devops)
 - [OK] PDF/HTML/CSV report export formats
 - [OK] Deep storage container scanning
 - [OK] AKS offensive security tools (4 tools)
 - [OK] Attack path analysis
 - [OK] Managed identity enumeration
+
+**Supported Locations:**
+- Common (10): eastus, eastus2, westus2, westeurope, northeurope, southeastasia, australiaeast, uksouth, centralindia, japaneast
+- All (45+): Full global coverage including Americas, Europe, Asia Pacific, Middle East, Africa
 
 **Dependencies:**
 - 201 npm packages installed
@@ -1367,13 +1496,177 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         };
       }
 
-      case "enumerate_resource_groups": {
-        const { subscriptionId } = request.params.arguments as {
+      case "list_active_locations": {
+        const { subscriptionId, scanMode } = request.params.arguments as {
           subscriptionId: string;
+          scanMode?: "common" | "all";
+        };
+
+        const locationsToCheck = scanMode === "all" ? AZURE_LOCATIONS : COMMON_LOCATIONS;
+        const resourceClient = new ResourceManagementClient(credential, subscriptionId);
+        const computeClient = new ComputeManagementClient(credential, subscriptionId);
+        const storageClient = new StorageManagementClient(credential, subscriptionId);
+        
+        const locationSummary: Record<string, { resourceGroups: number; vms: number; storage: number; total: number }> = {};
+        
+        // Get all resources and group by location
+        const allResources: Array<{ location?: string; type?: string }> = [];
+        
+        for await (const resource of resourceClient.resources.list()) {
+          allResources.push({ location: resource.location, type: resource.type });
+        }
+
+        // Get resource groups
+        const resourceGroups: Array<{ location?: string }> = [];
+        for await (const rg of resourceClient.resourceGroups.list()) {
+          resourceGroups.push({ location: rg.location });
+        }
+
+        // Count by location
+        for (const loc of locationsToCheck) {
+          const rgCount = resourceGroups.filter(rg => rg.location?.toLowerCase() === loc).length;
+          const vmCount = allResources.filter(r => r.location?.toLowerCase() === loc && r.type === "Microsoft.Compute/virtualMachines").length;
+          const storageCount = allResources.filter(r => r.location?.toLowerCase() === loc && r.type === "Microsoft.Storage/storageAccounts").length;
+          const totalInLoc = allResources.filter(r => r.location?.toLowerCase() === loc).length;
+          
+          if (rgCount > 0 || totalInLoc > 0) {
+            locationSummary[loc] = {
+              resourceGroups: rgCount,
+              vms: vmCount,
+              storage: storageCount,
+              total: totalInLoc
+            };
+          }
+        }
+
+        const activeLocations = Object.keys(locationSummary);
+        const totalResources = allResources.length;
+
+        let output = `# 🌍 Azure Active Locations Scan\n\n`;
+        output += `**Subscription:** ${subscriptionId}\n`;
+        output += `**Scan Mode:** ${scanMode || "common"} (${locationsToCheck.length} locations checked)\n`;
+        output += `**Active Locations:** ${activeLocations.length}\n`;
+        output += `**Total Resources:** ${totalResources}\n\n`;
+
+        if (activeLocations.length > 0) {
+          output += `## Active Locations\n\n`;
+          output += `| Location | Resource Groups | VMs | Storage | Total Resources |\n`;
+          output += `|----------|-----------------|-----|---------|----------------|\n`;
+          
+          for (const [loc, stats] of Object.entries(locationSummary).sort((a, b) => b[1].total - a[1].total)) {
+            output += `| ${loc} | ${stats.resourceGroups} | ${stats.vms} | ${stats.storage} | ${stats.total} |\n`;
+          }
+
+          output += `\n## Quick Reference\n`;
+          output += `Active locations: \`${activeLocations.join(", ")}\`\n`;
+        } else {
+          output += `⚠️ No resources found in checked locations.\n`;
+          output += `Try scanning with scanMode: "all" for comprehensive coverage.\n`;
+        }
+
+        return {
+          content: [{ type: "text", text: output }],
+        };
+      }
+
+      case "scan_all_locations": {
+        const { subscriptionId, resourceType, locations } = request.params.arguments as {
+          subscriptionId: string;
+          resourceType: "vms" | "storage" | "nsgs" | "aks" | "sql" | "keyvaults" | "public_ips" | "all";
+          locations?: string;
+        };
+
+        const targetLocations = resolveLocations(locations || "common");
+        const resourceClient = new ResourceManagementClient(credential, subscriptionId);
+        
+        // Collect all resources
+        const allResources: Array<{ name?: string; type?: string; location?: string; id?: string; resourceGroup?: string }> = [];
+        
+        for await (const resource of resourceClient.resources.list()) {
+          allResources.push({
+            name: resource.name,
+            type: resource.type,
+            location: resource.location,
+            id: resource.id,
+            resourceGroup: resource.id?.split('/')[4]
+          });
+        }
+
+        // Filter by location if specified
+        const filteredResources = targetLocations 
+          ? allResources.filter(r => r.location && targetLocations.includes(r.location.toLowerCase()))
+          : allResources;
+
+        // Filter by resource type
+        const typeMap: Record<string, string> = {
+          vms: "Microsoft.Compute/virtualMachines",
+          storage: "Microsoft.Storage/storageAccounts",
+          nsgs: "Microsoft.Network/networkSecurityGroups",
+          aks: "Microsoft.ContainerService/managedClusters",
+          sql: "Microsoft.Sql/servers",
+          keyvaults: "Microsoft.KeyVault/vaults",
+          public_ips: "Microsoft.Network/publicIPAddresses"
+        };
+
+        let results = filteredResources;
+        if (resourceType !== "all") {
+          results = filteredResources.filter(r => r.type === typeMap[resourceType]);
+        }
+
+        // Group by location
+        const byLocation: Record<string, typeof results> = {};
+        for (const r of results) {
+          const loc = r.location || "unknown";
+          if (!byLocation[loc]) byLocation[loc] = [];
+          byLocation[loc].push(r);
+        }
+
+        // Build output
+        let output = `# 🌍 Multi-Location Resource Scan\n\n`;
+        output += `**Subscription:** ${subscriptionId}\n`;
+        output += `**Resource Type:** ${resourceType}\n`;
+        output += `**Locations Scanned:** ${targetLocations ? targetLocations.length : "all"}\n`;
+        output += `**Total Found:** ${results.length}\n\n`;
+
+        if (Object.keys(byLocation).length > 0) {
+          for (const [loc, resources] of Object.entries(byLocation).sort((a, b) => b[1].length - a[1].length)) {
+            output += `## 📍 ${loc} (${resources.length})\n\n`;
+            
+            if (resourceType === "all") {
+              // Group by type
+              const byType: Record<string, number> = {};
+              for (const r of resources) {
+                const t = r.type || "unknown";
+                byType[t] = (byType[t] || 0) + 1;
+              }
+              for (const [t, count] of Object.entries(byType).sort((a, b) => b[1] - a[1])) {
+                output += `- ${t}: ${count}\n`;
+              }
+            } else {
+              for (const r of resources) {
+                output += `- **${r.name}** (${r.resourceGroup})\n`;
+              }
+            }
+            output += `\n`;
+          }
+        } else {
+          output += `⚠️ No ${resourceType} resources found in specified locations.\n`;
+        }
+
+        return {
+          content: [{ type: "text", text: output }],
+        };
+      }
+
+      case "enumerate_resource_groups": {
+        const { subscriptionId, location } = request.params.arguments as {
+          subscriptionId: string;
+          location?: string;
         };
 
         const client = new ResourceManagementClient(credential, subscriptionId);
         const resourceGroups = [];
+        const targetLocations = resolveLocations(location);
 
         for await (const rg of client.resourceGroups.list()) {
           resourceGroups.push({
@@ -1385,25 +1678,30 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           });
         }
 
+        // Filter by location if specified
+        const filtered = filterByLocation(resourceGroups, targetLocations);
+
+        let output = `# Resource Groups in Subscription\n\n`;
+        output += `Found ${filtered.length} resource group(s)`;
+        if (location) output += ` in ${location}`;
+        output += `:\n\n${JSON.stringify(filtered, null, 2)}`;
+
         return {
-          content: [
-            {
-              type: "text",
-              text: `# Resource Groups in Subscription\n\nFound ${resourceGroups.length} resource group(s):\n\n${JSON.stringify(resourceGroups, null, 2)}`,
-            },
-          ],
+          content: [{ type: "text", text: output }],
         };
       }
 
       case "enumerate_resources": {
-        const { subscriptionId, resourceGroup, resourceType } = request.params.arguments as {
+        const { subscriptionId, resourceGroup, resourceType, location } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
           resourceType?: string;
+          location?: string;
         };
 
         const client = new ResourceManagementClient(credential, subscriptionId);
         const resources = [];
+        const targetLocations = resolveLocations(location);
 
         let filter = "";
         if (resourceType) {
@@ -1433,18 +1731,21 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           }
         }
 
-        const summary = resources.reduce((acc, r) => {
+        // Filter by location if specified
+        const filtered = filterByLocation(resources, targetLocations);
+
+        const summary = filtered.reduce((acc, r) => {
           acc[r.type!] = (acc[r.type!] || 0) + 1;
           return acc;
         }, {} as Record<string, number>);
 
+        let output = `# Azure Resources\n\n`;
+        output += `Found ${filtered.length} resource(s)`;
+        if (location) output += ` in ${location}`;
+        output += `\n\n## Summary by Type:\n${JSON.stringify(summary, null, 2)}\n\n## Resources:\n${JSON.stringify(filtered, null, 2)}`;
+
         return {
-          content: [
-            {
-              type: "text",
-              text: `# Azure Resources\n\nFound ${resources.length} resource(s)\n\n## Summary by Type:\n${JSON.stringify(summary, null, 2)}\n\n## Resources:\n${JSON.stringify(resources, null, 2)}`,
-            },
-          ],
+          content: [{ type: "text", text: output }],
         };
       }
 

@@ -2,13 +2,13 @@
 
 # Stratos - Azure Security Assessment MCP Server
 
-[![Version](https://img.shields.io/badge/version-1.8.0-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
-[![Tools](https://img.shields.io/badge/tools-33-green.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Version](https://img.shields.io/badge/version-1.9.0-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Tools](https://img.shields.io/badge/tools-35-green.svg)](https://github.com/Jaikumar3/stratos-mcp)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 [![Azure SDK](https://img.shields.io/badge/Azure%20SDK-v4+-yellow.svg)](https://azure.microsoft.com/en-us/downloads/)
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)](https://github.com/Jaikumar3/stratos-mcp)
 
-**Enterprise-grade Azure security assessment toolkit with attack path analysis and compliance reporting**
+**Enterprise-grade Azure security assessment toolkit with multi-location scanning, attack path analysis, and compliance reporting**
 
 *Designed for security professionals conducting authorized penetration tests, compliance audits, and executive risk reporting*
 
@@ -20,10 +20,11 @@
 
 ## Overview
 
-**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 33 production-ready tools covering enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including service account analysis and secret hunting), and compliance reporting for Azure cloud environments.
+**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 35 production-ready tools covering multi-location scanning, enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including service account analysis and secret hunting), and compliance reporting for Azure cloud environments.
 
 ### Use Cases
 
+- **Multi-Location Scanning** - Scan resources across all 45+ Azure regions
 - **Security Assessments** - Identify misconfigurations and vulnerabilities
 - **Executive Reporting** - Generate professional risk assessment reports
 - **Compliance Audits** - Map findings to CIS, NIST frameworks
@@ -34,7 +35,8 @@
 ### Key Highlights
 
 - **100% Read-Only** - Safe for production environments  
-- **33 Security Tools** - Comprehensive Azure service coverage  
+- **35 Security Tools** - Comprehensive Azure service coverage  
+- **Multi-Location** - Scan common (10) or all (45+) Azure regions  
 - **Multi-Format Reports** - PDF, HTML, CSV, Markdown, JSON  
 - **Attack Path Analysis** - Privilege escalation and lateral movement mapping  
 - **AKS/Kubernetes** - 7 specialized container security tools (incl. SA & secret hunting)  
@@ -48,10 +50,16 @@
 <tr>
 <td width="50%">
 
+### 🌍 Multi-Location (2 Tools)
+- **list_active_locations** - Discover active Azure regions
+- **scan_all_locations** - Scan resources across all regions
+- Support for 45+ Azure locations globally
+- Location filtering on enumeration tools
+
 ### 🔍 Enumeration (7 Tools)
 - **Subscriptions** - Map Azure environment structure
-- **Resource Groups** - List all resource containers
-- **Resources** - Enumerate all resources (filterable)
+- **Resource Groups** - List all resource containers (with location filter)
+- **Resources** - Enumerate all resources (with location filter)
 - **Resource Details** - Get detailed configurations
 - **Public IPs** - Identify internet-exposed attack surface
 - **RBAC Assignments** - Audit access control permissions

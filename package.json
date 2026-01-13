@@ -1,7 +1,7 @@
 {
   "name": "stratos-mcp",
-  "version": "1.8.0",
-  "description": "Stratos - Azure Security Assessment MCP Server - 33 Professional Security Tools",
+  "version": "1.9.0",
+  "description": "Stratos - Azure Security Assessment MCP Server - 35 Professional Security Tools with Multi-Location Scanning",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
