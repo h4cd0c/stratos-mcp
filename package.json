@@ -1,7 +1,7 @@
 {
-  "name": "azure-pentest-mcp",
+  "name": "stratos-mcp",
   "version": "1.8.0",
-  "description": "Azure Penetration Testing MCP Server - 33 Professional Security Assessment Tools",
+  "description": "Stratos - Azure Security Assessment MCP Server - 33 Professional Security Tools",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
