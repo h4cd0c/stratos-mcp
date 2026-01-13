@@ -1,19 +1,19 @@
-# Azure Pentest MCP Server - Usage Guide
+# Stratos - Azure Security Assessment MCP Server - Usage Guide
 
-**Version:** 1.6.0 | **Total Tools:** 25
+**Version:** 1.8.0 | **Total Tools:** 33
 
 ## Quick Start
 
-Get comprehensive help with all 25 tools:
+Get comprehensive help with all 33 tools:
 ```bash
-#mcp_azure-pentest_help
+#mcp_stratos_help
 ```
 
 ## Installation
 
 ```powershell
 # Clone or download the repository
-cd azure-pentest
+cd stratos-mcp
 
 # Install dependencies
 npm install
@@ -31,9 +31,9 @@ Add to your MCP settings file:
 ```json
 {
   "mcpServers": {
-    "azure-pentest": {
+    "stratos": {
       "command": "node",
-      "args": ["C:\\path\\to\\azure-pentest\\dist\\index.js"],
+      "args": ["C:\\path\\to\\stratos-mcp\\dist\\index.js"],
       "disabled": false,
       "alwaysAllow": []
     }
@@ -55,24 +55,24 @@ Add to your MCP settings file:
 | AKS Clusters | Microsoft.ContainerService/managedClusters | RBAC, network policies |
 ```bash
 # Find all public IPs
-#sym:azure-pentest enumerate_resources
+#mcp_stratos_enumerate_resources
 subscriptionId: <YOUR_SUBSCRIPTION_ID>
 resourceType: Microsoft.Network/publicIPAddresses
 
 # Find all storage accounts
-#sym:azure-pentest enumerate_resources
+#mcp_stratos_enumerate_resources
 subscriptionId: <YOUR_SUBSCRIPTION_ID>
 resourceType: Microsoft.Storage/storageAccounts
 
 # Find all NSGs
-#sym:azure-pentest enumerate_resources
+#mcp_stratos_enumerate_resources
 subscriptionId: <YOUR_SUBSCRIPTION_ID>
 resourceType: Microsoft.Network/networkSecurityGroups
 ```
 
 ### Step 5: Deep Dive Analysis
 ```bash
-#sym:azure-pentest get_resource_details
+#mcp_stratos_get_resource_details
 subscriptionId: <YOUR_SUBSCRIPTION_ID>
 resourceGroup: <RESOURCE_GROUP>
 resourceProvider: Microsoft.Storage
@@ -113,37 +113,37 @@ az account show
 
 ### Phase 1: Discovery (Enumeration Tools)
 ```bash
-#mcp_azure-pentest_enumerate_subscriptions
-#mcp_azure-pentest_enumerate_public_ips subscriptionId: <sub-id>
-#mcp_azure-pentest_enumerate_rbac_assignments subscriptionId: <sub-id>
+#mcp_stratos_enumerate_subscriptions
+#mcp_stratos_enumerate_public_ips subscriptionId: <sub-id>
+#mcp_stratos_enumerate_rbac_assignments subscriptionId: <sub-id>
 ```
 
 ### Phase 2: Security Scanning
 ```bash
-#mcp_azure-pentest_analyze_storage_security subscriptionId: <sub-id>
-#mcp_azure-pentest_analyze_nsg_rules subscriptionId: <sub-id>
-#mcp_azure-pentest_scan_sql_databases subscriptionId: <sub-id>
+#mcp_stratos_analyze_storage_security subscriptionId: <sub-id>
+#mcp_stratos_analyze_nsg_rules subscriptionId: <sub-id>
+#mcp_stratos_scan_sql_databases subscriptionId: <sub-id>
 ```
 
 ### Phase 3: Attack Path Analysis
 ```bash
-#mcp_azure-pentest_analyze_attack_paths subscriptionId: <sub-id> startFrom: public-ips
+#mcp_stratos_analyze_attack_paths subscriptionId: <sub-id> startFrom: public-ips
 ```
 
 ### Phase 4: AKS Security Testing
 ```bash
-#mcp_azure-pentest_scan_aks_clusters subscriptionId: <sub-id>
-#mcp_azure-pentest_test_aks_imds_access subscriptionId: <sub-id> resourceGroup: <rg> clusterName: <aks>
+#mcp_stratos_scan_aks_clusters subscriptionId: <sub-id>
+#mcp_stratos_test_aks_imds_access subscriptionId: <sub-id> resourceGroup: <rg> clusterName: <aks>
 ```
 
 ### Phase 5: DevOps Security
 ```bash
-#mcp_azure-pentest_scan_azure_devops organizationUrl: https://dev.azure.com/yourorg personalAccessToken: <pat>
+#mcp_stratos_scan_azure_devops organizationUrl: https://dev.azure.com/yourorg personalAccessToken: <pat>
 ```
 
 ### Phase 6: Generate Report
 ```bash
-#mcp_azure-pentest_generate_security_report subscriptionId: <sub-id> format: pdf outputFile: C:\reports\security-report.pdf
+#mcp_stratos_generate_security_report subscriptionId: <sub-id> format: pdf outputFile: C:\reports\security-report.pdf
 ```
 
 ## Common Security Findings
@@ -192,5 +192,5 @@ az account show
 🔍 **Report examples:** [REPORT_STRUCTURE_EXAMPLE.md](REPORT_STRUCTURE_EXAMPLE.md)
 
 ---
-**Version:** 1.6.0 | **Total Tools:** 25 | **Last Updated:** December 2024
+**Version:** 1.8.0 | **Total Tools:** 33 | **Last Updated:** January 2026
 - **MCP SDK Version:** 1.0.4

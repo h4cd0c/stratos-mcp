@@ -161,7 +161,7 @@
 az login
 
 # Install dependencies
-cd azure-pentest
+cd stratos-mcp
 npm install
 npm run build
 ```
@@ -173,9 +173,9 @@ Add to `.vscode/mcp.json`:
 ```json
 {
   "servers": {
-    "azure-pentest": {
+    "stratos": {
       "command": "node",
-      "args": ["C:\\path\\to\\azure-pentest\\dist\\index.js"],
+      "args": ["C:\\path\\to\\stratos-mcp\\dist\\index.js"],
       "type": "stdio"
     }
   }
