@@ -1,12 +1,12 @@
 <div align="center">
 
-# 🔒 Azure Penetration Testing MCP Server
+# Stratos - Azure Security Assessment MCP Server
 
-[![Version](https://img.shields.io/badge/version-1.8.0-blue.svg)](https://github.com/Jaikumar3/azure-pentest-mcp)
-[![Tools](https://img.shields.io/badge/tools-33-green.svg)](https://github.com/Jaikumar3/azure-pentest-mcp)
+[![Version](https://img.shields.io/badge/version-1.8.0-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Tools](https://img.shields.io/badge/tools-33-green.svg)](https://github.com/Jaikumar3/stratos-mcp)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 [![Azure SDK](https://img.shields.io/badge/Azure%20SDK-v4+-yellow.svg)](https://azure.microsoft.com/en-us/downloads/)
-[![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)](https://github.com/Jaikumar3/azure-pentest-mcp)
+[![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)](https://github.com/Jaikumar3/stratos-mcp)
 
 **Enterprise-grade Azure security assessment toolkit with attack path analysis and compliance reporting**
 
@@ -18,31 +18,31 @@
 
 ---
 
-## 📖 Overview
+## Overview
 
-The **Azure Penetration Testing MCP Server** is a comprehensive security assessment framework built on the Model Context Protocol (MCP). It provides 33 production-ready tools covering enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including service account analysis and secret hunting), and compliance reporting for Azure cloud environments.
+**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 33 production-ready tools covering enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including service account analysis and secret hunting), and compliance reporting for Azure cloud environments.
 
-### 🎯 Use Cases
+### Use Cases
 
-- **🔍 Security Assessments** - Identify misconfigurations and vulnerabilities
-- **📊 Executive Reporting** - Generate professional risk assessment reports
-- **✅ Compliance Audits** - Map findings to CIS, NIST frameworks
-- **🛡️ Penetration Testing** - Discover attack paths and privilege escalation vectors
-- **☸️ Kubernetes Security** - AKS cluster, node, and IMDS vulnerability testing
-- **🔧 DevOps Security** - Detect hardcoded secrets in Azure DevOps
+- **Security Assessments** - Identify misconfigurations and vulnerabilities
+- **Executive Reporting** - Generate professional risk assessment reports
+- **Compliance Audits** - Map findings to CIS, NIST frameworks
+- **Penetration Testing** - Discover attack paths and privilege escalation vectors
+- **Kubernetes Security** - AKS cluster, node, and IMDS vulnerability testing
+- **DevOps Security** - Detect hardcoded secrets in Azure DevOps
 
-### ⚡ Key Highlights
+### Key Highlights
 
-✅ **100% Read-Only** - Safe for production environments  
-✅ **33 Security Tools** - Comprehensive Azure service coverage  
-✅ **Multi-Format Reports** - PDF, HTML, CSV, Markdown, JSON  
-✅ **Attack Path Analysis** - Privilege escalation and lateral movement mapping  
-✅ **AKS/Kubernetes** - 7 specialized container security tools (incl. SA & secret hunting)  
-✅ **Enterprise Ready** - Professional reports for executives and auditors
+- **100% Read-Only** - Safe for production environments  
+- **33 Security Tools** - Comprehensive Azure service coverage  
+- **Multi-Format Reports** - PDF, HTML, CSV, Markdown, JSON  
+- **Attack Path Analysis** - Privilege escalation and lateral movement mapping  
+- **AKS/Kubernetes** - 7 specialized container security tools (incl. SA & secret hunting)  
+- **Enterprise Ready** - Professional reports for executives and auditors
 
 ---
 
-## 🎯 Key Features
+## Key Features
 
 <table>
 <tr>
