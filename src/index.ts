@@ -70,7 +70,7 @@ function filterByLocation<T extends { location?: string }>(resources: T[], locat
 const server = new Server(
   {
     name: "stratos-mcp",
-    "version": "1.9.0",
+    "version": "1.9.1",
   },
   {
     capabilities: {
@@ -767,6 +767,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "hunt_aks_secrets",
         description: "Hunt for secrets in AKS cluster: enumerate K8s secrets, secrets in env vars, Azure Key Vault access, storage account credentials, ConfigMap secrets, mounted secret files, service principal credentials, container registry credentials. Returns extraction commands and remediation.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Resource group containing the AKS cluster",
+            },
+            clusterName: {
+              type: "string",
+              description: "AKS cluster name",
+            },
+          },
+          required: ["subscriptionId", "resourceGroup", "clusterName"],
+        },
+      },
+      {
+        name: "scan_aks_full",
+        description: "🚀 FULL AKS SECURITY SCAN - Runs ALL 7 AKS security checks in one shot: cluster security, credentials extraction, identity enumeration, node security, IMDS access testing, service account analysis, and secret hunting. Comprehensive Kubernetes security assessment.",
         inputSchema: {
           type: "object",
           properties: {
@@ -5268,6 +5290,240 @@ kubectl --token=\\$TOKEN get pods -A
         } catch (error: any) {
           return {
             content: [{ type: 'text', text: `Error hunting AKS secrets: ${error.message}` }],
+            isError: true,
+          };
+        }
+      }
+
+      case "scan_aks_full": {
+        const { subscriptionId, resourceGroup, clusterName } = request.params.arguments as {
+          subscriptionId: string;
+          resourceGroup: string;
+          clusterName: string;
+        };
+
+        try {
+          const aksClient = new ContainerServiceClient(credential, subscriptionId);
+          const computeClient = new ComputeManagementClient(credential, subscriptionId);
+          
+          let output = `# 🚀 FULL AKS SECURITY SCAN\n\n`;
+          output += `**Cluster:** ${clusterName}\n`;
+          output += `**Resource Group:** ${resourceGroup}\n`;
+          output += `**Subscription:** ${subscriptionId}\n`;
+          output += `**Scan Time:** ${new Date().toISOString()}\n\n`;
+          output += `---\n\n`;
+
+          // Get cluster details
+          const cluster = await aksClient.managedClusters.get(resourceGroup, clusterName);
+          
+          let criticalCount = 0;
+          let highCount = 0;
+          let mediumCount = 0;
+          let lowCount = 0;
+
+          // ========== 1. CLUSTER SECURITY ==========
+          output += `## 1️⃣ Cluster Security Configuration\n\n`;
+          
+          const clusterFindings: string[] = [];
+          
+          // RBAC
+          if (!cluster.enableRbac) {
+            clusterFindings.push(`❌ **CRITICAL:** RBAC is DISABLED`);
+            criticalCount++;
+          } else {
+            clusterFindings.push(`✅ RBAC is enabled`);
+          }
+
+          // Azure AD Integration
+          if (!cluster.aadProfile) {
+            clusterFindings.push(`⚠️ **HIGH:** Azure AD integration not configured`);
+            highCount++;
+          } else {
+            clusterFindings.push(`✅ Azure AD integration enabled`);
+          }
+
+          // Private Cluster
+          if (!cluster.apiServerAccessProfile?.enablePrivateCluster) {
+            clusterFindings.push(`⚠️ **MEDIUM:** Not a private cluster (API server publicly accessible)`);
+            mediumCount++;
+          } else {
+            clusterFindings.push(`✅ Private cluster enabled`);
+          }
+
+          // Authorized IP Ranges
+          if (!cluster.apiServerAccessProfile?.authorizedIPRanges || cluster.apiServerAccessProfile.authorizedIPRanges.length === 0) {
+            clusterFindings.push(`⚠️ **MEDIUM:** No authorized IP ranges configured`);
+            mediumCount++;
+          } else {
+            clusterFindings.push(`✅ Authorized IP ranges: ${cluster.apiServerAccessProfile.authorizedIPRanges.join(', ')}`);
+          }
+
+          // Network Policy
+          if (!cluster.networkProfile?.networkPolicy) {
+            clusterFindings.push(`⚠️ **HIGH:** Network policy not configured`);
+            highCount++;
+          } else {
+            clusterFindings.push(`✅ Network policy: ${cluster.networkProfile.networkPolicy}`);
+          }
+
+          // Azure Policy
+          if (!cluster.addonProfiles?.azurepolicy?.enabled) {
+            clusterFindings.push(`⚠️ **MEDIUM:** Azure Policy addon not enabled`);
+            mediumCount++;
+          } else {
+            clusterFindings.push(`✅ Azure Policy addon enabled`);
+          }
+
+          // Defender
+          if (!cluster.securityProfile?.defender?.securityMonitoring?.enabled) {
+            clusterFindings.push(`⚠️ **HIGH:** Defender for Containers not enabled`);
+            highCount++;
+          } else {
+            clusterFindings.push(`✅ Defender for Containers enabled`);
+          }
+
+          output += clusterFindings.join('\n') + '\n\n';
+
+          // ========== 2. CREDENTIALS ==========
+          output += `## 2️⃣ Cluster Credentials & Access\n\n`;
+          
+          output += `| Property | Value |\n|----------|-------|\n`;
+          output += `| FQDN | ${cluster.fqdn || 'N/A'} |\n`;
+          output += `| API Server | https://${cluster.fqdn}:443 |\n`;
+          output += `| Kubernetes Version | ${cluster.kubernetesVersion} |\n`;
+          output += `| Private FQDN | ${cluster.privateFqdn || 'N/A'} |\n`;
+          output += `| Local Accounts | ${cluster.disableLocalAccounts ? 'Disabled ✅' : 'Enabled ⚠️'} |\n\n`;
+
+          if (!cluster.disableLocalAccounts) {
+            output += `⚠️ **HIGH:** Local accounts enabled - admin credentials may be available\n\n`;
+            highCount++;
+          }
+
+          // ========== 3. IDENTITY ENUMERATION ==========
+          output += `## 3️⃣ Identity Configuration\n\n`;
+          
+          // Cluster Identity
+          if (cluster.identity) {
+            output += `**Cluster Identity:**\n`;
+            output += `- Type: ${cluster.identity.type}\n`;
+            if (cluster.identity.principalId) {
+              output += `- Principal ID: ${cluster.identity.principalId}\n`;
+            }
+            if (cluster.identity.userAssignedIdentities) {
+              output += `- User Assigned: ${Object.keys(cluster.identity.userAssignedIdentities).join(', ')}\n`;
+            }
+            output += '\n';
+          }
+
+          // Kubelet Identity
+          if (cluster.identityProfile?.kubeletidentity) {
+            const kubelet = cluster.identityProfile.kubeletidentity;
+            output += `**Kubelet Identity:**\n`;
+            output += `- Client ID: ${kubelet.clientId}\n`;
+            output += `- Object ID: ${kubelet.objectId}\n`;
+            output += `- Resource ID: ${kubelet.resourceId}\n\n`;
+          }
+
+          // Workload Identity
+          if (cluster.oidcIssuerProfile?.enabled) {
+            output += `✅ **Workload Identity:** Enabled\n`;
+            output += `- Issuer URL: ${cluster.oidcIssuerProfile.issuerURL}\n\n`;
+          } else {
+            output += `⚠️ **HIGH:** Workload Identity not enabled\n\n`;
+            highCount++;
+          }
+
+          // ========== 4. NODE SECURITY ==========
+          output += `## 4️⃣ Node Pool Security\n\n`;
+          
+          const nodePools = cluster.agentPoolProfiles || [];
+          for (const pool of nodePools) {
+            output += `### Node Pool: ${pool.name}\n`;
+            output += `| Setting | Value | Status |\n|---------|-------|--------|\n`;
+            output += `| VM Size | ${pool.vmSize} | ℹ️ |\n`;
+            output += `| Node Count | ${pool.count} | ℹ️ |\n`;
+            output += `| OS Type | ${pool.osType} | ℹ️ |\n`;
+            output += `| OS Disk Size | ${pool.osDiskSizeGB} GB | ℹ️ |\n`;
+            
+            // Check node security
+            if (pool.enableNodePublicIP) {
+              output += `| Public IP | Enabled | ❌ CRITICAL |\n`;
+              criticalCount++;
+            } else {
+              output += `| Public IP | Disabled | ✅ |\n`;
+            }
+            
+            if (pool.enableFips) {
+              output += `| FIPS | Enabled | ✅ |\n`;
+            } else {
+              output += `| FIPS | Disabled | ⚠️ MEDIUM |\n`;
+              mediumCount++;
+            }
+
+            output += '\n';
+          }
+
+          // ========== 5. IMDS ACCESS ==========
+          output += `## 5️⃣ IMDS Access & Pod Escape Risk\n\n`;
+          
+          // Check for pod identity
+          if (cluster.podIdentityProfile?.enabled) {
+            output += `⚠️ **HIGH:** Legacy Pod Identity enabled - vulnerable to IMDS exploitation\n`;
+            highCount++;
+          }
+
+          output += `### IMDS Testing Commands\n\n`;
+          output += "```bash\n";
+          output += `# From a compromised pod, test IMDS access:\n`;
+          output += `curl -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01"\n\n`;
+          output += `# Get managed identity token:\n`;
+          output += `curl -H "Metadata: true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/"\n`;
+          output += "```\n\n";
+
+          // ========== 6. SERVICE ACCOUNTS ==========
+          output += `## 6️⃣ Service Account Security\n\n`;
+          output += `### Audit Commands\n\n`;
+          output += "```bash\n";
+          output += `# Check default SA auto-mount\n`;
+          output += `kubectl get sa default -o jsonpath='{.automountServiceAccountToken}'\n\n`;
+          output += `# Find SAs with cluster-admin\n`;
+          output += `kubectl get clusterrolebindings -o json | jq -r '.items[] | select(.roleRef.name=="cluster-admin") | .subjects[]?'\n\n`;
+          output += `# List legacy token secrets\n`;
+          output += `kubectl get secrets -A -o json | jq -r '.items[] | select(.type=="kubernetes.io/service-account-token") | "\\(.metadata.namespace)/\\(.metadata.name)"'\n`;
+          output += "```\n\n";
+
+          // ========== 7. SECRET HUNTING ==========
+          output += `## 7️⃣ Secret Hunting Guide\n\n`;
+          output += `### Quick Commands\n\n`;
+          output += "```bash\n";
+          output += `# List all secrets\n`;
+          output += `kubectl get secrets -A --field-selector type!=kubernetes.io/service-account-token\n\n`;
+          output += `# Find secrets with Azure keywords\n`;
+          output += `kubectl get secrets -A -o json | jq -r '.items[] | select(.data | keys[] | test("azure|storage|connection|key|password"; "i")) | "\\(.metadata.namespace)/\\(.metadata.name)"'\n\n`;
+          output += `# Extract a secret\n`;
+          output += `kubectl get secret <name> -n <ns> -o jsonpath='{.data}' | jq -r 'to_entries[] | "\\(.key): \\(.value | @base64d)"'\n`;
+          output += "```\n\n";
+
+          // ========== SUMMARY ==========
+          output += `---\n\n`;
+          output += `## 📊 Summary\n\n`;
+          output += `| Severity | Count |\n|----------|-------|\n`;
+          output += `| 🔴 CRITICAL | ${criticalCount} |\n`;
+          output += `| 🟠 HIGH | ${highCount} |\n`;
+          output += `| 🟡 MEDIUM | ${mediumCount} |\n`;
+          output += `| 🟢 LOW | ${lowCount} |\n`;
+          output += `| **TOTAL** | **${criticalCount + highCount + mediumCount + lowCount}** |\n\n`;
+
+          if (criticalCount > 0) {
+            output += `⚠️ **${criticalCount} CRITICAL findings require immediate attention!**\n`;
+          }
+
+          return {
+            content: [{ type: 'text', text: output }],
+          };
+        } catch (error: any) {
+          return {
+            content: [{ type: 'text', text: `Error running full AKS scan: ${error.message}` }],
             isError: true,
           };
         }
