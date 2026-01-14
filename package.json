@@ -1,6 +1,6 @@
 {
   "name": "stratos-mcp",
-  "version": "1.9.1",
+  "version": "1.9.4",
   "description": "Stratos - Azure Security Assessment MCP Server - 36 Professional Security Tools with Multi-Location Scanning",
   "main": "dist/index.js",
   "type": "module",
@@ -26,6 +26,7 @@
     "@azure/arm-subscriptions": "^5.1.0",
     "@azure/identity": "^4.0.0",
     "@azure/storage-blob": "^12.29.1",
+    "@kubernetes/client-node": "^1.4.0",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "@types/pdfkit": "^0.17.4",
     "azure-devops-node-api": "^15.1.1",
@@ -44,14 +45,26 @@
   "jest": {
     "preset": "ts-jest/presets/default-esm",
     "testEnvironment": "node",
-    "extensionsToTreatAsEsm": [".ts"],
+    "extensionsToTreatAsEsm": [
+      ".ts"
+    ],
     "moduleNameMapper": {
       "^(\\.{1,2}/.*)\\.js$": "$1"
     },
     "transform": {
-      "^.+\\.ts$": ["ts-jest", { "useESM": true }]
+      "^.+\\.ts$": [
+        "ts-jest",
+        {
+          "useESM": true
+        }
+      ]
     },
-    "testMatch": ["**/tests/**/*.test.ts"],
-    "collectCoverageFrom": ["src/**/*.ts", "!src/**/*.d.ts"]
+    "testMatch": [
+      "**/tests/**/*.test.ts"
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.ts",
+      "!src/**/*.d.ts"
+    ]
   }
 }
