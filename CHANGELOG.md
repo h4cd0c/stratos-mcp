@@ -5,6 +5,79 @@ All notable changes to Stratos (Azure Security Assessment MCP Server) will be do
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.4] - 2026-01-14
+
+### Added
+
+#### Live Kubernetes API Scanning
+- **scan_aks_live** - Direct Kubernetes API security scanning via `@kubernetes/client-node`
+  - Connects to AKS cluster API server using cluster credentials
+  - Enumerates all namespaces and identifies sensitive secrets
+  - Analyzes service accounts for auto-mount token risks
+  - Scans RBAC bindings for cluster-admin and privilege escalation
+  - Detects privileged pods, hostNetwork, hostPath mounts
+  - Identifies missing network policies (lateral movement risk)
+  - Finds exposed LoadBalancer/NodePort services
+  - Scans ConfigMaps for hardcoded secrets
+  - Risk scoring with severity aggregation
+
+### Changed
+- Added `@kubernetes/client-node` dependency for K8s API access
+- Total tools: **37**
+
+---
+
+## [1.9.3] - 2026-01-14
+
+### Changed
+
+#### Enhanced scan_aks_full
+- Comprehensive 13-section pentest-grade security assessment
+- CIS Kubernetes Benchmark mapping (1.1.x - 5.x references)
+- MITRE ATT&CK technique mapping for each finding
+- Risk scoring system (CRITICAL: 40pts, HIGH: 20pts, MEDIUM: 5pts, LOW: 1pt)
+- Detailed sections:
+  1. Cluster Overview with control plane analysis
+  2. Authentication & Authorization (AAD, RBAC, local accounts)
+  3. Network Security (CNI, policies, private cluster, authorized IPs)
+  4. Node Pool Security (OS, node count, taints, labels)
+  5. Secrets Management (Key Vault, CSI driver, managed HSM)
+  6. Container Security (Defender, image integrity, admission control)
+  7. Logging & Monitoring (diagnostics, Log Analytics, container insights)
+  8. Workload Identity (pod identity, OIDC, federated credentials)
+  9. Runtime Security (policy, sysctls, seccomp, AppArmor)
+  10. Supply Chain Security (ACR, image policies, artifact streaming)
+  11. Backup & DR (Velero, AKS backup, etcd snapshots)
+  12. Compliance Status (Azure Policy, regulatory alignment)
+  13. Attack Vectors (IMDS, kubelet, etcd, privilege escalation paths)
+
+---
+
+## [1.9.2] - 2026-01-13
+
+### Fixed
+
+#### Authentication Improvements
+- Changed credential chain to use `AzureCliCredential` first
+- Bypasses VS Code extension service principal token issues
+- Falls back to `ManagedIdentityCredential` and `EnvironmentCredential`
+- Uses `ChainedTokenCredential` for maximum flexibility
+
+---
+
+## [1.9.1] - 2026-01-12
+
+### Added
+
+#### Combined AKS Scanning
+- **scan_aks_full** - All 7 AKS security checks in one comprehensive scan
+  - Combines: enumerate_aks_clusters, analyze_aks_security, scan_aks_rbac,
+    scan_aks_network, scan_aks_secrets, scan_aks_service_accounts, hunt_aks_secrets
+  - Single tool for complete AKS security assessment
+  - Aggregated findings with severity counts
+
+---
+
 ## [1.9.0] - 2026-01-10
 
 ### Added
