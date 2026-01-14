@@ -5310,11 +5310,12 @@ kubectl --token=\\$TOKEN get pods -A
           const aksClient = new ContainerServiceClient(credential, subscriptionId);
           const computeClient = new ComputeManagementClient(credential, subscriptionId);
           
-          let output = `# 🚀 FULL AKS SECURITY SCAN\n\n`;
+          let output = `# � COMPREHENSIVE AKS SECURITY ASSESSMENT\n\n`;
           output += `**Cluster:** ${clusterName}\n`;
           output += `**Resource Group:** ${resourceGroup}\n`;
           output += `**Subscription:** ${subscriptionId}\n`;
-          output += `**Scan Time:** ${new Date().toISOString()}\n\n`;
+          output += `**Scan Time:** ${new Date().toISOString()}\n`;
+          output += `**Scanner:** Stratos MCP v1.9.3\n\n`;
           output += `---\n\n`;
 
           // Get cluster details
@@ -5324,97 +5325,376 @@ kubectl --token=\\$TOKEN get pods -A
           let highCount = 0;
           let mediumCount = 0;
           let lowCount = 0;
-
-          // ========== 1. CLUSTER SECURITY ==========
-          output += `## 1️⃣ Cluster Security Configuration\n\n`;
           
-          const clusterFindings: string[] = [];
+          // Store all findings with CIS mapping
+          const allFindings: Array<{severity: string; finding: string; cis?: string; remediation: string}> = [];
+
+          // ========== 1. CLUSTER OVERVIEW ==========
+          output += `## 📋 Cluster Overview\n\n`;
+          output += `| Property | Value |\n|----------|-------|\n`;
+          output += `| Kubernetes Version | ${cluster.kubernetesVersion} |\n`;
+          output += `| SKU Tier | ${cluster.sku?.tier || 'Free'} |\n`;
+          output += `| Location | ${cluster.location} |\n`;
+          output += `| Provisioning State | ${cluster.provisioningState} |\n`;
+          output += `| Power State | ${cluster.powerState?.code || 'Running'} |\n`;
+          output += `| FQDN | ${cluster.fqdn || 'N/A'} |\n`;
+          output += `| Private FQDN | ${cluster.privateFqdn || 'N/A'} |\n`;
+          output += `| Node Resource Group | ${cluster.nodeResourceGroup} |\n`;
+          output += `| DNS Prefix | ${cluster.dnsPrefix} |\n\n`;
+
+          // Kubernetes Version EOL Check
+          const k8sVersion = cluster.kubernetesVersion || '';
+          const versionParts = k8sVersion.split('.');
+          const minorVersion = parseInt(versionParts[1] || '0');
+          
+          // K8s versions older than 1.27 are EOL as of Jan 2026
+          if (minorVersion < 28) {
+            allFindings.push({
+              severity: 'CRITICAL',
+              finding: `Kubernetes version ${k8sVersion} is approaching or past End-of-Life`,
+              cis: 'CIS 1.1.1',
+              remediation: 'Upgrade to a supported Kubernetes version (1.28+)'
+            });
+            criticalCount++;
+          } else if (minorVersion < 29) {
+            allFindings.push({
+              severity: 'MEDIUM',
+              finding: `Kubernetes version ${k8sVersion} - consider upgrading to latest`,
+              cis: 'CIS 1.1.1',
+              remediation: 'Plan upgrade to latest Kubernetes version'
+            });
+            mediumCount++;
+          }
+
+          // SKU Tier Check
+          if (cluster.sku?.tier === 'Free') {
+            allFindings.push({
+              severity: 'MEDIUM',
+              finding: 'Using Free tier - no SLA, limited features',
+              remediation: 'Consider Standard tier for production (99.9% SLA, uptime guarantees)'
+            });
+            mediumCount++;
+          }
+
+          // ========== 2. AUTHENTICATION & AUTHORIZATION ==========
+          output += `## 🔑 Authentication & Authorization\n\n`;
+          output += `| Security Control | Status | Risk |\n|------------------|--------|------|\n`;
           
           // RBAC
           if (!cluster.enableRbac) {
-            clusterFindings.push(`❌ **CRITICAL:** RBAC is DISABLED`);
+            output += `| RBAC | ❌ Disabled | CRITICAL |\n`;
+            allFindings.push({
+              severity: 'CRITICAL',
+              finding: 'RBAC is DISABLED - all users have full cluster access',
+              cis: 'CIS 5.1.1',
+              remediation: 'Enable RBAC on cluster (requires cluster recreation)'
+            });
             criticalCount++;
           } else {
-            clusterFindings.push(`✅ RBAC is enabled`);
+            output += `| RBAC | ✅ Enabled | OK |\n`;
           }
 
           // Azure AD Integration
           if (!cluster.aadProfile) {
-            clusterFindings.push(`⚠️ **HIGH:** Azure AD integration not configured`);
+            output += `| Azure AD Integration | ❌ Not Configured | HIGH |\n`;
+            allFindings.push({
+              severity: 'HIGH',
+              finding: 'Azure AD integration not configured - using K8s-only auth',
+              cis: 'CIS 3.1.1',
+              remediation: 'Enable Azure AD integration for centralized identity management'
+            });
             highCount++;
           } else {
-            clusterFindings.push(`✅ Azure AD integration enabled`);
+            output += `| Azure AD Integration | ✅ Enabled | OK |\n`;
+            
+            // Check for managed AAD vs legacy
+            if (cluster.aadProfile.managed) {
+              output += `| Managed AAD | ✅ Yes | OK |\n`;
+            } else {
+              output += `| Managed AAD | ⚠️ Legacy | MEDIUM |\n`;
+              allFindings.push({
+                severity: 'MEDIUM',
+                finding: 'Using legacy Azure AD integration (not managed)',
+                remediation: 'Migrate to managed Azure AD integration'
+              });
+              mediumCount++;
+            }
+
+            // Check Azure RBAC for K8s
+            if (cluster.aadProfile.enableAzureRbac) {
+              output += `| Azure RBAC for K8s | ✅ Enabled | OK |\n`;
+            } else {
+              output += `| Azure RBAC for K8s | ⚠️ Disabled | MEDIUM |\n`;
+              allFindings.push({
+                severity: 'MEDIUM',
+                finding: 'Azure RBAC for Kubernetes not enabled',
+                remediation: 'Enable Azure RBAC for centralized access control via Azure IAM'
+              });
+              mediumCount++;
+            }
+
+            // Check admin group
+            if (cluster.aadProfile.adminGroupObjectIDs && cluster.aadProfile.adminGroupObjectIDs.length > 0) {
+              output += `| Admin Groups | ${cluster.aadProfile.adminGroupObjectIDs.length} configured | INFO |\n`;
+            }
           }
 
+          // Local Accounts
+          if (!cluster.disableLocalAccounts) {
+            output += `| Local Accounts | ⚠️ Enabled | HIGH |\n`;
+            allFindings.push({
+              severity: 'HIGH',
+              finding: 'Local accounts enabled - admin kubeconfig available via az aks get-credentials --admin',
+              cis: 'CIS 3.1.2',
+              remediation: 'Disable local accounts: az aks update --disable-local-accounts'
+            });
+            highCount++;
+          } else {
+            output += `| Local Accounts | ✅ Disabled | OK |\n`;
+          }
+
+          output += '\n';
+
+          // ========== 3. NETWORK SECURITY ==========
+          output += `## 🌐 Network Security\n\n`;
+          output += `| Security Control | Status | Risk |\n|------------------|--------|------|\n`;
+          
           // Private Cluster
           if (!cluster.apiServerAccessProfile?.enablePrivateCluster) {
-            clusterFindings.push(`⚠️ **MEDIUM:** Not a private cluster (API server publicly accessible)`);
-            mediumCount++;
+            output += `| Private Cluster | ❌ No | HIGH |\n`;
+            allFindings.push({
+              severity: 'HIGH',
+              finding: 'API server is publicly accessible (not private cluster)',
+              cis: 'CIS 4.1.1',
+              remediation: 'Enable private cluster or configure authorized IP ranges'
+            });
+            highCount++;
           } else {
-            clusterFindings.push(`✅ Private cluster enabled`);
+            output += `| Private Cluster | ✅ Yes | OK |\n`;
           }
 
           // Authorized IP Ranges
-          if (!cluster.apiServerAccessProfile?.authorizedIPRanges || cluster.apiServerAccessProfile.authorizedIPRanges.length === 0) {
-            clusterFindings.push(`⚠️ **MEDIUM:** No authorized IP ranges configured`);
-            mediumCount++;
-          } else {
-            clusterFindings.push(`✅ Authorized IP ranges: ${cluster.apiServerAccessProfile.authorizedIPRanges.join(', ')}`);
+          const authIPs = cluster.apiServerAccessProfile?.authorizedIPRanges || [];
+          if (authIPs.length === 0 && !cluster.apiServerAccessProfile?.enablePrivateCluster) {
+            output += `| Authorized IP Ranges | ❌ Not Configured | HIGH |\n`;
+            allFindings.push({
+              severity: 'HIGH',
+              finding: 'No authorized IP ranges - API server open to internet',
+              cis: 'CIS 4.1.2',
+              remediation: 'Configure authorized IP ranges: az aks update --api-server-authorized-ip-ranges <IPs>'
+            });
+            highCount++;
+          } else if (authIPs.length > 0) {
+            output += `| Authorized IP Ranges | ✅ ${authIPs.length} ranges | OK |\n`;
+          }
+
+          // Network Plugin
+          const networkPlugin = cluster.networkProfile?.networkPlugin || 'kubenet';
+          output += `| Network Plugin | ${networkPlugin} | INFO |\n`;
+          
+          if (networkPlugin === 'kubenet') {
+            allFindings.push({
+              severity: 'LOW',
+              finding: 'Using kubenet (basic) networking',
+              remediation: 'Consider Azure CNI for better network policy support and performance'
+            });
+            lowCount++;
           }
 
           // Network Policy
-          if (!cluster.networkProfile?.networkPolicy) {
-            clusterFindings.push(`⚠️ **HIGH:** Network policy not configured`);
+          const networkPolicy = cluster.networkProfile?.networkPolicy;
+          if (!networkPolicy) {
+            output += `| Network Policy | ❌ None | CRITICAL |\n`;
+            allFindings.push({
+              severity: 'CRITICAL',
+              finding: 'Network policy NOT configured - pods can communicate freely',
+              cis: 'CIS 5.3.2',
+              remediation: 'Enable network policy (azure/calico): az aks update --network-policy azure'
+            });
+            criticalCount++;
+          } else {
+            output += `| Network Policy | ✅ ${networkPolicy} | OK |\n`;
+          }
+
+          // Outbound Type
+          const outboundType = cluster.networkProfile?.outboundType || 'loadBalancer';
+          output += `| Outbound Type | ${outboundType} | INFO |\n`;
+          
+          if (outboundType === 'loadBalancer') {
+            allFindings.push({
+              severity: 'LOW',
+              finding: 'Using default outbound type (loadBalancer)',
+              remediation: 'Consider userDefinedRouting with Azure Firewall for better egress control'
+            });
+            lowCount++;
+          }
+
+          // HTTP Application Routing (INSECURE)
+          if (cluster.addonProfiles?.httpApplicationRouting?.enabled) {
+            output += `| HTTP App Routing | ⚠️ Enabled | HIGH |\n`;
+            allFindings.push({
+              severity: 'HIGH',
+              finding: 'HTTP Application Routing addon enabled - NOT recommended for production',
+              remediation: 'Disable HTTP Application Routing, use NGINX/AGIC ingress instead'
+            });
+            highCount++;
+          }
+
+          // Load Balancer SKU
+          output += `| Load Balancer SKU | ${cluster.networkProfile?.loadBalancerSku || 'standard'} | INFO |\n`;
+          
+          output += '\n';
+
+          // Network Profile Details
+          output += `### Network Configuration Details\n\n`;
+          output += `| Setting | Value |\n|---------|-------|\n`;
+          output += `| Service CIDR | ${cluster.networkProfile?.serviceCidr || 'N/A'} |\n`;
+          output += `| DNS Service IP | ${cluster.networkProfile?.dnsServiceIP || 'N/A'} |\n`;
+          output += `| Pod CIDR | ${cluster.networkProfile?.podCidr || 'N/A (Azure CNI)'} |\n`;
+          output += `| Docker Bridge | ${(cluster.networkProfile as any)?.dockerBridgeCidr || 'N/A'} |\n`;
+          output += `| Network Mode | ${cluster.networkProfile?.networkMode || 'bridge'} |\n`;
+          output += `| Network Plugin Mode | ${cluster.networkProfile?.networkPluginMode || 'N/A'} |\n\n`;
+
+          // ========== 4. SECURITY FEATURES ==========
+          output += `## 🛡️ Security Features & Add-ons\n\n`;
+          output += `| Security Feature | Status | Risk |\n|------------------|--------|------|\n`;
+          
+          // Defender for Containers
+          if (!cluster.securityProfile?.defender?.securityMonitoring?.enabled) {
+            output += `| Defender for Containers | ❌ Not Enabled | HIGH |\n`;
+            allFindings.push({
+              severity: 'HIGH',
+              finding: 'Microsoft Defender for Containers not enabled',
+              remediation: 'Enable Defender for threat detection: az aks update --enable-defender'
+            });
             highCount++;
           } else {
-            clusterFindings.push(`✅ Network policy: ${cluster.networkProfile.networkPolicy}`);
+            output += `| Defender for Containers | ✅ Enabled | OK |\n`;
           }
 
           // Azure Policy
           if (!cluster.addonProfiles?.azurepolicy?.enabled) {
-            clusterFindings.push(`⚠️ **MEDIUM:** Azure Policy addon not enabled`);
+            output += `| Azure Policy | ❌ Not Enabled | MEDIUM |\n`;
+            allFindings.push({
+              severity: 'MEDIUM',
+              finding: 'Azure Policy addon not enabled',
+              cis: 'CIS 5.2.1',
+              remediation: 'Enable Azure Policy: az aks enable-addons --addons azure-policy'
+            });
             mediumCount++;
           } else {
-            clusterFindings.push(`✅ Azure Policy addon enabled`);
+            output += `| Azure Policy | ✅ Enabled | OK |\n`;
           }
 
-          // Defender
-          if (!cluster.securityProfile?.defender?.securityMonitoring?.enabled) {
-            clusterFindings.push(`⚠️ **HIGH:** Defender for Containers not enabled`);
-            highCount++;
+          // Key Vault Secrets Provider
+          if (cluster.addonProfiles?.azureKeyvaultSecretsProvider?.enabled) {
+            output += `| Key Vault Secrets Provider | ✅ Enabled | OK |\n`;
+            
+            // Check secret rotation
+            const kvConfig = cluster.addonProfiles.azureKeyvaultSecretsProvider.config;
+            if (kvConfig?.enableSecretRotation === 'true') {
+              output += `| Secret Rotation | ✅ Enabled | OK |\n`;
+            } else {
+              output += `| Secret Rotation | ⚠️ Disabled | MEDIUM |\n`;
+              allFindings.push({
+                severity: 'MEDIUM',
+                finding: 'Key Vault secret rotation not enabled',
+                remediation: 'Enable secret rotation for automatic secret refresh'
+              });
+              mediumCount++;
+            }
           } else {
-            clusterFindings.push(`✅ Defender for Containers enabled`);
+            output += `| Key Vault Secrets Provider | ⚠️ Not Enabled | MEDIUM |\n`;
+            allFindings.push({
+              severity: 'MEDIUM',
+              finding: 'Key Vault Secrets Provider not enabled',
+              remediation: 'Enable for secure secret injection: az aks enable-addons --addons azure-keyvault-secrets-provider'
+            });
+            mediumCount++;
           }
 
-          output += clusterFindings.join('\n') + '\n\n';
+          // Container Insights (Monitoring)
+          if (cluster.addonProfiles?.omsagent?.enabled || cluster.addonProfiles?.omsAgent?.enabled) {
+            output += `| Container Insights | ✅ Enabled | OK |\n`;
+          } else {
+            output += `| Container Insights | ⚠️ Not Enabled | MEDIUM |\n`;
+            allFindings.push({
+              severity: 'MEDIUM',
+              finding: 'Container Insights (monitoring) not enabled',
+              remediation: 'Enable for visibility: az aks enable-addons --addons monitoring'
+            });
+            mediumCount++;
+          }
 
-          // ========== 2. CREDENTIALS ==========
-          output += `## 2️⃣ Cluster Credentials & Access\n\n`;
-          
-          output += `| Property | Value |\n|----------|-------|\n`;
-          output += `| FQDN | ${cluster.fqdn || 'N/A'} |\n`;
-          output += `| API Server | https://${cluster.fqdn}:443 |\n`;
-          output += `| Kubernetes Version | ${cluster.kubernetesVersion} |\n`;
-          output += `| Private FQDN | ${cluster.privateFqdn || 'N/A'} |\n`;
-          output += `| Local Accounts | ${cluster.disableLocalAccounts ? 'Disabled ✅' : 'Enabled ⚠️'} |\n\n`;
+          // Image Cleaner
+          if (cluster.securityProfile?.imageCleaner?.enabled) {
+            output += `| Image Cleaner | ✅ Enabled | OK |\n`;
+          } else {
+            output += `| Image Cleaner | ⚠️ Not Enabled | LOW |\n`;
+            allFindings.push({
+              severity: 'LOW',
+              finding: 'Image Cleaner not enabled - stale images may accumulate',
+              remediation: 'Enable Image Cleaner to remove unused images'
+            });
+            lowCount++;
+          }
 
-          if (!cluster.disableLocalAccounts) {
-            output += `⚠️ **HIGH:** Local accounts enabled - admin credentials may be available\n\n`;
+          // Workload Identity
+          if (cluster.oidcIssuerProfile?.enabled && cluster.securityProfile?.workloadIdentity?.enabled) {
+            output += `| Workload Identity | ✅ Enabled | OK |\n`;
+          } else if (cluster.oidcIssuerProfile?.enabled) {
+            output += `| Workload Identity | ⚠️ OIDC Only | MEDIUM |\n`;
+            allFindings.push({
+              severity: 'MEDIUM',
+              finding: 'OIDC issuer enabled but Workload Identity not fully configured',
+              remediation: 'Enable Workload Identity for secure pod identity'
+            });
+            mediumCount++;
+          } else {
+            output += `| Workload Identity | ❌ Not Enabled | HIGH |\n`;
+            allFindings.push({
+              severity: 'HIGH',
+              finding: 'Workload Identity not enabled - pods may use node identity',
+              cis: 'CIS 5.1.6',
+              remediation: 'Enable Workload Identity: az aks update --enable-oidc-issuer --enable-workload-identity'
+            });
             highCount++;
           }
 
-          // ========== 3. IDENTITY ENUMERATION ==========
-          output += `## 3️⃣ Identity Configuration\n\n`;
+          // Legacy Pod Identity (should be disabled)
+          if (cluster.podIdentityProfile?.enabled) {
+            output += `| Pod Identity (Legacy) | ⚠️ Enabled | HIGH |\n`;
+            allFindings.push({
+              severity: 'HIGH',
+              finding: 'Legacy Pod Identity enabled - deprecated and vulnerable to IMDS attacks',
+              remediation: 'Migrate to Workload Identity and disable Pod Identity'
+            });
+            highCount++;
+          }
+
+          output += '\n';
+
+          // ========== 5. IDENTITY CONFIGURATION ==========
+          output += `## 🪪 Identity Configuration\n\n`;
           
           // Cluster Identity
+          output += `### Cluster Identity\n\n`;
           if (cluster.identity) {
-            output += `**Cluster Identity:**\n`;
-            output += `- Type: ${cluster.identity.type}\n`;
+            output += `| Property | Value |\n|----------|-------|\n`;
+            output += `| Type | ${cluster.identity.type} |\n`;
             if (cluster.identity.principalId) {
-              output += `- Principal ID: ${cluster.identity.principalId}\n`;
+              output += `| Principal ID | ${cluster.identity.principalId} |\n`;
+            }
+            if (cluster.identity.tenantId) {
+              output += `| Tenant ID | ${cluster.identity.tenantId} |\n`;
             }
             if (cluster.identity.userAssignedIdentities) {
-              output += `- User Assigned: ${Object.keys(cluster.identity.userAssignedIdentities).join(', ')}\n`;
+              const uaIds = Object.keys(cluster.identity.userAssignedIdentities);
+              output += `| User Assigned Identities | ${uaIds.length} |\n`;
+              for (const uaId of uaIds) {
+                const name = uaId.split('/').pop();
+                output += `| → | ${name} |\n`;
+              }
             }
             output += '\n';
           }
@@ -5422,105 +5702,337 @@ kubectl --token=\\$TOKEN get pods -A
           // Kubelet Identity
           if (cluster.identityProfile?.kubeletidentity) {
             const kubelet = cluster.identityProfile.kubeletidentity;
-            output += `**Kubelet Identity:**\n`;
-            output += `- Client ID: ${kubelet.clientId}\n`;
-            output += `- Object ID: ${kubelet.objectId}\n`;
-            output += `- Resource ID: ${kubelet.resourceId}\n\n`;
+            output += `### Kubelet Identity\n\n`;
+            output += `| Property | Value |\n|----------|-------|\n`;
+            output += `| Client ID | ${kubelet.clientId} |\n`;
+            output += `| Object ID | ${kubelet.objectId} |\n`;
+            output += `| Resource ID | ${kubelet.resourceId} |\n\n`;
+            
+            output += `⚠️ **Pentest Note:** Check RBAC roles assigned to kubelet identity for privilege escalation paths\n\n`;
           }
 
-          // Workload Identity
+          // OIDC Issuer
           if (cluster.oidcIssuerProfile?.enabled) {
-            output += `✅ **Workload Identity:** Enabled\n`;
-            output += `- Issuer URL: ${cluster.oidcIssuerProfile.issuerURL}\n\n`;
-          } else {
-            output += `⚠️ **HIGH:** Workload Identity not enabled\n\n`;
-            highCount++;
+            output += `### OIDC Issuer\n\n`;
+            output += `| Property | Value |\n|----------|-------|\n`;
+            output += `| Enabled | ✅ Yes |\n`;
+            output += `| Issuer URL | ${cluster.oidcIssuerProfile.issuerURL} |\n\n`;
           }
 
-          // ========== 4. NODE SECURITY ==========
-          output += `## 4️⃣ Node Pool Security\n\n`;
+          // ========== 6. NODE POOL SECURITY ==========
+          output += `## 🖥️ Node Pool Security Analysis\n\n`;
           
           const nodePools = cluster.agentPoolProfiles || [];
           for (const pool of nodePools) {
-            output += `### Node Pool: ${pool.name}\n`;
-            output += `| Setting | Value | Status |\n|---------|-------|--------|\n`;
-            output += `| VM Size | ${pool.vmSize} | ℹ️ |\n`;
-            output += `| Node Count | ${pool.count} | ℹ️ |\n`;
-            output += `| OS Type | ${pool.osType} | ℹ️ |\n`;
-            output += `| OS Disk Size | ${pool.osDiskSizeGB} GB | ℹ️ |\n`;
+            output += `### Node Pool: \`${pool.name}\`\n\n`;
+            output += `| Setting | Value | Risk |\n|---------|-------|------|\n`;
+            output += `| VM Size | ${pool.vmSize} | INFO |\n`;
+            output += `| Node Count | ${pool.count} (min: ${pool.minCount || 'N/A'}, max: ${pool.maxCount || 'N/A'}) | INFO |\n`;
+            output += `| OS Type | ${pool.osType} | INFO |\n`;
+            output += `| OS SKU | ${pool.osSKU || 'Ubuntu'} | INFO |\n`;
+            output += `| OS Disk Size | ${pool.osDiskSizeGB || 128} GB | INFO |\n`;
+            output += `| OS Disk Type | ${pool.osDiskType || 'Managed'} | INFO |\n`;
+            output += `| Mode | ${pool.mode} | INFO |\n`;
+            output += `| Orchestrator Version | ${pool.orchestratorVersion || cluster.kubernetesVersion} | INFO |\n`;
             
-            // Check node security
+            // Security Checks
             if (pool.enableNodePublicIP) {
-              output += `| Public IP | Enabled | ❌ CRITICAL |\n`;
+              output += `| Node Public IP | ❌ Enabled | CRITICAL |\n`;
+              allFindings.push({
+                severity: 'CRITICAL',
+                finding: `Node pool '${pool.name}' has public IPs enabled on nodes`,
+                cis: 'CIS 4.2.1',
+                remediation: 'Disable public IPs on nodes - use private cluster or NAT gateway'
+              });
               criticalCount++;
             } else {
-              output += `| Public IP | Disabled | ✅ |\n`;
+              output += `| Node Public IP | ✅ Disabled | OK |\n`;
             }
             
             if (pool.enableFips) {
-              output += `| FIPS | Enabled | ✅ |\n`;
+              output += `| FIPS 140-2 | ✅ Enabled | OK |\n`;
             } else {
-              output += `| FIPS | Disabled | ⚠️ MEDIUM |\n`;
+              output += `| FIPS 140-2 | ⚠️ Disabled | LOW |\n`;
+              allFindings.push({
+                severity: 'LOW',
+                finding: `Node pool '${pool.name}' does not have FIPS enabled`,
+                remediation: 'Enable FIPS for compliance requirements (requires node pool recreation)'
+              });
+              lowCount++;
+            }
+
+            // Encryption at Host
+            if (pool.enableEncryptionAtHost) {
+              output += `| Encryption at Host | ✅ Enabled | OK |\n`;
+            } else {
+              output += `| Encryption at Host | ⚠️ Disabled | MEDIUM |\n`;
+              allFindings.push({
+                severity: 'MEDIUM',
+                finding: `Node pool '${pool.name}' does not have encryption at host`,
+                remediation: 'Enable encryption at host for data-at-rest protection'
+              });
               mediumCount++;
+            }
+
+            // Ultra SSD
+            if (pool.enableUltraSSD) {
+              output += `| Ultra SSD | ✅ Enabled | INFO |\n`;
+            }
+
+            // Spot instances
+            if (pool.scaleSetPriority === 'Spot') {
+              output += `| Spot Instance | ⚠️ Yes | INFO |\n`;
+              output += `| Spot Eviction Policy | ${pool.scaleSetEvictionPolicy || 'Delete'} | INFO |\n`;
+            }
+
+            // Node labels and taints
+            if (pool.nodeLabels && Object.keys(pool.nodeLabels).length > 0) {
+              output += `| Node Labels | ${Object.keys(pool.nodeLabels).length} labels | INFO |\n`;
+            }
+            if (pool.nodeTaints && pool.nodeTaints.length > 0) {
+              output += `| Node Taints | ${pool.nodeTaints.length} taints | INFO |\n`;
             }
 
             output += '\n';
           }
 
-          // ========== 5. IMDS ACCESS ==========
-          output += `## 5️⃣ IMDS Access & Pod Escape Risk\n\n`;
+          // ========== 7. AUTO-UPGRADE & MAINTENANCE ==========
+          output += `## 🔄 Auto-Upgrade & Maintenance\n\n`;
+          output += `| Setting | Value | Risk |\n|---------|-------|------|\n`;
           
-          // Check for pod identity
-          if (cluster.podIdentityProfile?.enabled) {
-            output += `⚠️ **HIGH:** Legacy Pod Identity enabled - vulnerable to IMDS exploitation\n`;
-            highCount++;
+          // Auto-upgrade channel
+          const upgradeChannel = cluster.autoUpgradeProfile?.upgradeChannel || 'none';
+          if (upgradeChannel === 'none') {
+            output += `| Auto-Upgrade Channel | ❌ None | MEDIUM |\n`;
+            allFindings.push({
+              severity: 'MEDIUM',
+              finding: 'Auto-upgrade not configured - manual upgrades required',
+              remediation: 'Consider enabling auto-upgrade: az aks update --auto-upgrade-channel stable'
+            });
+            mediumCount++;
+          } else {
+            output += `| Auto-Upgrade Channel | ✅ ${upgradeChannel} | OK |\n`;
           }
 
-          output += `### IMDS Testing Commands\n\n`;
+          // Node OS upgrade channel
+          const nodeOsUpgrade = cluster.autoUpgradeProfile?.nodeOSUpgradeChannel || 'None';
+          output += `| Node OS Upgrade | ${nodeOsUpgrade} | INFO |\n`;
+
+          output += '\n';
+
+          // ========== 8. STORAGE SECURITY ==========
+          output += `## 💾 Storage Security\n\n`;
+          output += `| Setting | Value | Risk |\n|---------|-------|------|\n`;
+          
+          // Disk Encryption Set
+          if (cluster.diskEncryptionSetID) {
+            output += `| Disk Encryption Set | ✅ Configured | OK |\n`;
+            output += `| DES ID | ${cluster.diskEncryptionSetID.split('/').pop()} | INFO |\n`;
+          } else {
+            output += `| Disk Encryption Set | ⚠️ Platform Managed | LOW |\n`;
+            allFindings.push({
+              severity: 'LOW',
+              finding: 'Using platform-managed disk encryption (no customer-managed keys)',
+              remediation: 'Consider using customer-managed keys (CMK) for disk encryption'
+            });
+            lowCount++;
+          }
+
+          output += '\n';
+
+          // ========== 9. IMDS & POD ESCAPE TESTING ==========
+          output += `## 🎯 IMDS & Pod Escape Testing\n\n`;
+          
+          if (!networkPolicy) {
+            output += `⚠️ **CRITICAL:** No network policy = IMDS accessible from all pods!\n\n`;
+          }
+          
+          output += `### Step 1: Deploy Test Pod\n`;
           output += "```bash\n";
-          output += `# From a compromised pod, test IMDS access:\n`;
-          output += `curl -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01"\n\n`;
-          output += `# Get managed identity token:\n`;
-          output += `curl -H "Metadata: true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/"\n`;
+          output += `kubectl run imds-test --image=alpine:latest --restart=Never --rm -it -- sh\n`;
+          output += "```\n\n";
+          
+          output += `### Step 2: Test IMDS Access\n`;
+          output += "```bash\n";
+          output += `apk add --no-cache curl jq\n`;
+          output += `curl -s -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | jq\n`;
+          output += "```\n\n";
+          
+          output += `### Step 3: Extract Managed Identity Token\n`;
+          output += "```bash\n";
+          output += `# Get ARM token\n`;
+          output += `TOKEN=$(curl -s -H "Metadata: true" \\\n`;
+          output += `  "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" \\\n`;
+          output += `  | jq -r .access_token)\n\n`;
+          output += `# Decode token to see permissions\n`;
+          output += `echo $TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | jq\n\n`;
+          output += `# List subscriptions with stolen token\n`;
+          output += `curl -s -H "Authorization: Bearer $TOKEN" \\\n`;
+          output += `  "https://management.azure.com/subscriptions?api-version=2020-01-01" | jq\n\n`;
+          output += `# Get Key Vault token\n`;
+          output += `KV_TOKEN=$(curl -s -H "Metadata: true" \\\n`;
+          output += `  "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net" \\\n`;
+          output += `  | jq -r .access_token)\n`;
+          output += "```\n\n";
+          
+          output += `### Step 4: Block IMDS with Network Policy\n`;
+          output += "```yaml\n";
+          output += `apiVersion: networking.k8s.io/v1\n`;
+          output += `kind: NetworkPolicy\n`;
+          output += `metadata:\n`;
+          output += `  name: deny-imds\n`;
+          output += `  namespace: default  # Apply to all namespaces!\n`;
+          output += `spec:\n`;
+          output += `  podSelector: {}\n`;
+          output += `  policyTypes:\n`;
+          output += `    - Egress\n`;
+          output += `  egress:\n`;
+          output += `    - to:\n`;
+          output += `        - ipBlock:\n`;
+          output += `            cidr: 0.0.0.0/0\n`;
+          output += `            except:\n`;
+          output += `              - 169.254.169.254/32\n`;
           output += "```\n\n";
 
-          // ========== 6. SERVICE ACCOUNTS ==========
-          output += `## 6️⃣ Service Account Security\n\n`;
-          output += `### Audit Commands\n\n`;
+          // ========== 10. SERVICE ACCOUNT AUDIT ==========
+          output += `## 🔐 Service Account Security Audit\n\n`;
+          output += `### Check Default SA Auto-Mount\n`;
           output += "```bash\n";
-          output += `# Check default SA auto-mount\n`;
-          output += `kubectl get sa default -o jsonpath='{.automountServiceAccountToken}'\n\n`;
-          output += `# Find SAs with cluster-admin\n`;
-          output += `kubectl get clusterrolebindings -o json | jq -r '.items[] | select(.roleRef.name=="cluster-admin") | .subjects[]?'\n\n`;
-          output += `# List legacy token secrets\n`;
-          output += `kubectl get secrets -A -o json | jq -r '.items[] | select(.type=="kubernetes.io/service-account-token") | "\\(.metadata.namespace)/\\(.metadata.name)"'\n`;
+          output += `kubectl get serviceaccounts --all-namespaces -o json | \\\n`;
+          output += `  jq -r '.items[] | select(.automountServiceAccountToken != false) | "\\(.metadata.namespace)/\\(.metadata.name)"'\n`;
+          output += "```\n\n";
+          
+          output += `### Find Cluster-Admin Bindings\n`;
+          output += "```bash\n";
+          output += `kubectl get clusterrolebindings -o json | \\\n`;
+          output += `  jq -r '.items[] | select(.roleRef.name=="cluster-admin") | "\\(.metadata.name): \\(.subjects // [] | map(.name) | join(", "))"'\n`;
+          output += "```\n\n";
+          
+          output += `### Find SAs with Dangerous Permissions\n`;
+          output += "```bash\n";
+          output += `kubectl auth can-i --list --as=system:serviceaccount:kube-system:default\n`;
+          output += "```\n\n";
+          
+          output += `### List Legacy Token Secrets\n`;
+          output += "```bash\n";
+          output += `kubectl get secrets -A -o json | \\\n`;
+          output += `  jq -r '.items[] | select(.type=="kubernetes.io/service-account-token") | "\\(.metadata.namespace)/\\(.metadata.name)"'\n`;
           output += "```\n\n";
 
-          // ========== 7. SECRET HUNTING ==========
-          output += `## 7️⃣ Secret Hunting Guide\n\n`;
-          output += `### Quick Commands\n\n`;
+          // ========== 11. SECRET HUNTING ==========
+          output += `## 🔍 Secret Hunting Commands\n\n`;
+          output += `### List All Secrets (excluding SA tokens)\n`;
           output += "```bash\n";
-          output += `# List all secrets\n`;
-          output += `kubectl get secrets -A --field-selector type!=kubernetes.io/service-account-token\n\n`;
-          output += `# Find secrets with Azure keywords\n`;
-          output += `kubectl get secrets -A -o json | jq -r '.items[] | select(.data | keys[] | test("azure|storage|connection|key|password"; "i")) | "\\(.metadata.namespace)/\\(.metadata.name)"'\n\n`;
-          output += `# Extract a secret\n`;
-          output += `kubectl get secret <name> -n <ns> -o jsonpath='{.data}' | jq -r 'to_entries[] | "\\(.key): \\(.value | @base64d)"'\n`;
+          output += `kubectl get secrets -A --field-selector type!=kubernetes.io/service-account-token -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,TYPE:.type\n`;
           output += "```\n\n";
+          
+          output += `### Find Secrets with Sensitive Keywords\n`;
+          output += "```bash\n";
+          output += `kubectl get secrets -A -o json | jq -r '\n`;
+          output += `  .items[] | \n`;
+          output += `  select(.data | keys[] | test("password|secret|key|token|connection|azure"; "i")) | \n`;
+          output += `  "\\(.metadata.namespace)/\\(.metadata.name): \\(.data | keys | join(\", \"))"'\n`;
+          output += "```\n\n";
+          
+          output += `### Extract and Decode Secret\n`;
+          output += "```bash\n";
+          output += `kubectl get secret <SECRET_NAME> -n <NAMESPACE> -o json | \\\n`;
+          output += `  jq -r '.data | to_entries[] | "\\(.key): \\(.value | @base64d)"'\n`;
+          output += "```\n\n";
+          
+          output += `### Find ConfigMaps with Secrets\n`;
+          output += "```bash\n";
+          output += `kubectl get configmaps -A -o json | jq -r '\n`;
+          output += `  .items[] | select(.data | to_entries[] | .value | test("password|connectionstring|apikey"; "i")) | \n`;
+          output += `  "\\(.metadata.namespace)/\\(.metadata.name)"'\n`;
+          output += "```\n\n";
+          
+          output += `### Find Secrets in Environment Variables\n`;
+          output += "```bash\n";
+          output += `kubectl get pods -A -o json | jq -r '\n`;
+          output += `  .items[] | . as $pod | .spec.containers[] | .env[]? | \n`;
+          output += `  select(.valueFrom.secretKeyRef) | \n`;
+          output += `  "\\($pod.metadata.namespace)/\\($pod.metadata.name): \\(.name) from \\(.valueFrom.secretKeyRef.name)"'\n`;
+          output += "```\n\n";
+
+          // ========== 12. CIS BENCHMARK MAPPING ==========
+          output += `## 📋 CIS Kubernetes Benchmark Mapping\n\n`;
+          output += `| CIS Control | Finding | Status |\n|-------------|---------|--------|\n`;
+          
+          // Map findings to CIS
+          const cisMapping: Record<string, {control: string; status: string}> = {
+            'CIS 1.1.1': { control: 'Kubernetes Version', status: minorVersion >= 28 ? '✅ PASS' : '❌ FAIL' },
+            'CIS 3.1.1': { control: 'Azure AD Authentication', status: cluster.aadProfile ? '✅ PASS' : '❌ FAIL' },
+            'CIS 3.1.2': { control: 'Disable Local Accounts', status: cluster.disableLocalAccounts ? '✅ PASS' : '❌ FAIL' },
+            'CIS 4.1.1': { control: 'Private API Server', status: cluster.apiServerAccessProfile?.enablePrivateCluster ? '✅ PASS' : '⚠️ REVIEW' },
+            'CIS 4.1.2': { control: 'API Server IP Restriction', status: authIPs.length > 0 || cluster.apiServerAccessProfile?.enablePrivateCluster ? '✅ PASS' : '❌ FAIL' },
+            'CIS 5.1.1': { control: 'RBAC Enabled', status: cluster.enableRbac ? '✅ PASS' : '❌ FAIL' },
+            'CIS 5.1.6': { control: 'Workload Identity', status: cluster.oidcIssuerProfile?.enabled ? '✅ PASS' : '⚠️ REVIEW' },
+            'CIS 5.2.1': { control: 'Azure Policy Enabled', status: cluster.addonProfiles?.azurepolicy?.enabled ? '✅ PASS' : '⚠️ REVIEW' },
+            'CIS 5.3.2': { control: 'Network Policy Enabled', status: networkPolicy ? '✅ PASS' : '❌ FAIL' },
+          };
+          
+          for (const [cis, info] of Object.entries(cisMapping)) {
+            output += `| ${cis} | ${info.control} | ${info.status} |\n`;
+          }
+          output += '\n';
+
+          // ========== 13. ALL FINDINGS ==========
+          output += `## 🚨 All Security Findings\n\n`;
+          
+          // Sort by severity
+          const severityOrder: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+          allFindings.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+          
+          if (allFindings.length > 0) {
+            output += `| # | Severity | Finding | CIS | Remediation |\n|---|----------|---------|-----|-------------|\n`;
+            let i = 1;
+            for (const f of allFindings) {
+              const icon = f.severity === 'CRITICAL' ? '🔴' : f.severity === 'HIGH' ? '🟠' : f.severity === 'MEDIUM' ? '🟡' : '🟢';
+              output += `| ${i++} | ${icon} ${f.severity} | ${f.finding} | ${f.cis || '-'} | ${f.remediation} |\n`;
+            }
+          } else {
+            output += `✅ No security findings - cluster is well configured!\n`;
+          }
+          output += '\n';
 
           // ========== SUMMARY ==========
           output += `---\n\n`;
-          output += `## 📊 Summary\n\n`;
+          output += `## 📊 Executive Summary\n\n`;
           output += `| Severity | Count |\n|----------|-------|\n`;
           output += `| 🔴 CRITICAL | ${criticalCount} |\n`;
           output += `| 🟠 HIGH | ${highCount} |\n`;
           output += `| 🟡 MEDIUM | ${mediumCount} |\n`;
           output += `| 🟢 LOW | ${lowCount} |\n`;
-          output += `| **TOTAL** | **${criticalCount + highCount + mediumCount + lowCount}** |\n\n`;
+          output += `| **TOTAL FINDINGS** | **${allFindings.length}** |\n\n`;
+
+          // Risk Score
+          const riskScore = (criticalCount * 40) + (highCount * 20) + (mediumCount * 5) + (lowCount * 1);
+          let riskLevel = 'LOW';
+          let riskEmoji = '🟢';
+          if (riskScore >= 100) { riskLevel = 'CRITICAL'; riskEmoji = '🔴'; }
+          else if (riskScore >= 50) { riskLevel = 'HIGH'; riskEmoji = '🟠'; }
+          else if (riskScore >= 20) { riskLevel = 'MEDIUM'; riskEmoji = '🟡'; }
+          
+          output += `### Risk Assessment\n\n`;
+          output += `**Risk Score:** ${riskScore} / 100+ possible\n`;
+          output += `**Risk Level:** ${riskEmoji} **${riskLevel}**\n\n`;
 
           if (criticalCount > 0) {
-            output += `⚠️ **${criticalCount} CRITICAL findings require immediate attention!**\n`;
+            output += `⚠️ **${criticalCount} CRITICAL findings require immediate remediation!**\n\n`;
           }
+
+          // Top 3 Recommendations
+          output += `### 🎯 Top Priority Remediations\n\n`;
+          const topFindings = allFindings.slice(0, 3);
+          let priority = 1;
+          for (const f of topFindings) {
+            output += `${priority++}. **${f.finding}**\n   → ${f.remediation}\n\n`;
+          }
+
+          output += `---\n\n`;
+          output += `*Generated by Stratos MCP v1.9.3 - Azure Penetration Testing Toolkit*\n`;
+          output += `*Reference: https://cloud.hacktricks.wiki/en/pentesting-cloud/azure-security/az-services/az-aks*\n`;
 
           return {
             content: [{ type: 'text', text: output }],
