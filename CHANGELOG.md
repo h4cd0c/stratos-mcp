@@ -5,6 +5,51 @@ All notable changes to Stratos (Azure Security Assessment MCP Server) will be do
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-01-14
+
+### Added
+
+#### NEW TOOL: `test_aks_imds_full_recon`
+Complete IMDS exploitation and full Azure reconnaissance from Kubernetes pods.
+
+**Attack Chain:** `Pod → IMDS (169.254.169.254) → Managed Identity Token → Azure Resources`
+
+| Phase | Reconnaissance Step | Details |
+|-------|---------------------|---------|
+| 1 | Target Pod Selection | Find running pod to execute from |
+| 2 | IMDS Accessibility | Check if metadata service reachable |
+| 3 | Identity Discovery | Extract tenant ID, client IDs |
+| 4 | Token Theft | Steal tokens for ARM, KeyVault, Storage, Graph |
+| 5 | Subscription Enumeration | List all accessible subscriptions |
+| 6 | Role Assignment Analysis | Map permissions and scopes |
+| 7 | Resource Group Enumeration | Discover all resource groups |
+| 8 | Resource Enumeration | 10 resource types (Storage, KeyVault, ACR, SQL, Cosmos, VMs, AKS, App Services, VNets, NSGs) |
+| 9 | Data Plane Access Testing | ACR repos, KeyVault secrets, Storage blobs |
+| 10 | Privilege Escalation Paths | Role creation, VM pivot, network modification |
+
+**Data Plane Exploitation:**
+- **ACR**: ARM token → Exchange → Refresh token → Catalog enumeration
+- **Key Vault**: Direct secret/key enumeration via vault.azure.net token
+- **Storage**: Blob container listing via storage.azure.com token
+
+**MITRE ATT&CK Mapping:**
+- T1552.005: Cloud Instance Metadata API
+- T1078.004: Cloud Accounts
+- T1530: Data from Cloud Storage
+- T1613: Container and Resource Discovery
+- T1528: Steal Application Access Token
+
+**Remediation Guidance:**
+- NetworkPolicy to block IMDS (169.254.169.254/32)
+- Enable Workload Identity
+- Reduce kubelet identity permissions
+- Apply Pod Security Standards
+
+### Changed
+- Total tools: **38**
+
+---
+
 ## [1.9.8] - 2026-01-14
 
 ### Added
