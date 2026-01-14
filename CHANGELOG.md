@@ -5,6 +5,47 @@ All notable changes to Stratos (Azure Security Assessment MCP Server) will be do
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.8] - 2026-01-14
+
+### Added
+
+#### Comprehensive K8s Security Assessment (20 Checks)
+- **scan_aks_live** now includes 20 security checks based on industry pentest methodologies
+
+| # | Check | Attack Vector |
+|---|-------|---------------|
+| 1 | Namespaces | Enumeration |
+| 2 | Secrets Analysis | Credential Theft |
+| 3 | Service Accounts | Token Abuse |
+| 4 | RBAC Bindings | Privilege Escalation |
+| 5 | Privileged Pods | Container Escape |
+| 6 | Network Policies | Lateral Movement |
+| 7 | Exposed Services | External Attack Surface |
+| 8 | ConfigMaps | Secrets Leakage |
+| 9 | Cluster Roles | Wildcard Permissions |
+| 10 | Pod Security Contexts | hostPID/hostIPC/Capabilities |
+| 11 | Ingress Controllers | TLS/External Exposure |
+| 12 | DaemonSets | Node-Wide Compromise |
+| 13 | SA Token Analysis | Legacy Tokens |
+| 14 | Container Images | :latest tags, Public Registries |
+| 15 | CronJobs | Persistence Mechanism |
+| 16 | Persistent Volumes | HostPath/NFS Exposure |
+| 17 | Resource Limits | DoS Prevention |
+| 18 | K8s Version | CVE Detection |
+| 19 | Pod Security Standards | PSS Enforcement |
+| 20 | Attack Surface Summary | MITRE ATT&CK Mapping |
+
+### Changed
+- **kubectl CLI**: Replaced K8s API client with direct kubectl execution (30s timeout)
+- **Reliability**: Fixed 10-minute timeout issues with unreliable K8s API client
+
+### References
+- https://exploit-notes.hdks.org/exploit/container/kubernetes/
+- https://deepstrike.io/blog/kubernetes-penetration-testing-methodology-and-guide
+- CyberArk K8s Pentest Methodology Part 1
+
+---
+
 ## [1.9.4] - 2026-01-14
 
 ### Added
