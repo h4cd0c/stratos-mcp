@@ -6089,7 +6089,7 @@ kubectl --token=\\$TOKEN get pods -A
           output += `**Subscription:** ${subscriptionId}\n`;
           output += `**Target Namespace:** ${namespace || 'All namespaces'}\n`;
           output += `**Scan Time:** ${new Date().toISOString()}\n`;
-          output += `**Scanner:** Stratos MCP v1.9.7 (Enhanced K8s Pentest Methodology)\n\n`;
+          output += `**Scanner:** Stratos MCP v1.9.8 (20 Security Checks)\n\n`;
           output += `---\n\n`;
 
           // Get cluster credentials
@@ -6918,7 +6918,321 @@ kubectl --token=\\$TOKEN get pods -A
             output += `❌ Failed to analyze tokens: ${e.message}\n\n`;
           }
 
-          // ========== 14. ATTACK SURFACE SUMMARY ==========
+          // ========== 14. CONTAINER IMAGE SECURITY ==========
+          output += `## 🐋 Container Image Security\n\n`;
+          try {
+            const podsCmd = namespace
+              ? `get pods -n ${namespace} -o json`
+              : `get pods --all-namespaces -o json`;
+            const podsJson = await runKubectl(podsCmd);
+            const podItems = JSON.parse(podsJson).items || [];
+            
+            const latestTagImages: Array<{ns: string; pod: string; image: string}> = [];
+            const publicRegistryImages: Array<{ns: string; pod: string; image: string}> = [];
+            const noPullPolicyImages: Array<{ns: string; pod: string; image: string}> = [];
+            const allImages = new Set<string>();
+            
+            const publicRegistries = ['docker.io', 'gcr.io', 'ghcr.io', 'quay.io', 'registry.hub.docker.com'];
+            
+            for (const pod of podItems) {
+              const podName = (pod as any).metadata?.name || 'unknown';
+              const podNs = (pod as any).metadata?.namespace || 'unknown';
+              
+              for (const container of ((pod as any).spec?.containers || [])) {
+                const image = container.image || '';
+                const pullPolicy = container.imagePullPolicy || '';
+                allImages.add(image);
+                
+                // Check for :latest or no tag
+                if (image.endsWith(':latest') || !image.includes(':')) {
+                  latestTagImages.push({ ns: podNs, pod: podName, image });
+                }
+                
+                // Check for public registries (no private registry prefix)
+                const isPublic = !image.includes('/') || publicRegistries.some(r => image.startsWith(r));
+                if (isPublic && !image.includes('.azurecr.io') && !image.includes('.ecr.')) {
+                  publicRegistryImages.push({ ns: podNs, pod: podName, image });
+                }
+                
+                // Check for missing imagePullPolicy
+                if (!pullPolicy || pullPolicy === 'IfNotPresent') {
+                  noPullPolicyImages.push({ ns: podNs, pod: podName, image });
+                }
+              }
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Unique Images | ${allImages.size} |\n`;
+            output += `| Using :latest tag | ${latestTagImages.length} |\n`;
+            output += `| Public Registry Images | ${publicRegistryImages.length} |\n`;
+            output += `| Missing Pull Policy | ${noPullPolicyImages.length} |\n\n`;
+            
+            if (latestTagImages.length > 0) {
+              output += `### ⚠️ Images Using :latest Tag\n\n`;
+              output += `| Namespace | Pod | Image |\n|-----------|-----|-------|\n`;
+              for (const img of latestTagImages.slice(0, 10)) {
+                output += `| ${img.ns} | ${img.pod} | ${img.image.substring(0, 50)}... |\n`;
+              }
+              output += '\n';
+              
+              findings.push({
+                severity: 'MEDIUM',
+                category: 'Images',
+                finding: `${latestTagImages.length} containers using :latest tag`,
+                details: 'Use immutable tags for reproducibility and security'
+              });
+              mediumCount++;
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze container images: ${e.message}\n\n`;
+          }
+
+          // ========== 15. CRONJOBS ANALYSIS ==========
+          output += `## ⏰ CronJobs Analysis\n\n`;
+          try {
+            const cronJson = await runKubectl('get cronjobs --all-namespaces -o json');
+            const cronItems = JSON.parse(cronJson).items || [];
+            
+            const privilegedCronJobs: Array<{ns: string; name: string; schedule: string; issues: string[]}> = [];
+            
+            for (const cron of cronItems) {
+              const cronName = (cron as any).metadata?.name || 'unknown';
+              const cronNs = (cron as any).metadata?.namespace || 'unknown';
+              const schedule = (cron as any).spec?.schedule || 'unknown';
+              const jobSpec = (cron as any).spec?.jobTemplate?.spec?.template?.spec || {};
+              const issues: string[] = [];
+              
+              if (jobSpec.hostNetwork) issues.push('hostNetwork');
+              if (jobSpec.hostPID) issues.push('hostPID');
+              
+              for (const container of (jobSpec.containers || [])) {
+                if (container.securityContext?.privileged) issues.push('privileged');
+                if (container.securityContext?.runAsUser === 0) issues.push('runAsRoot');
+              }
+              
+              if (issues.length > 0) {
+                privilegedCronJobs.push({ ns: cronNs, name: cronName, schedule, issues });
+              }
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Total CronJobs | ${cronItems.length} |\n`;
+            output += `| Privileged CronJobs | ${privilegedCronJobs.length} |\n\n`;
+            
+            if (privilegedCronJobs.length > 0) {
+              output += `### 🚨 CronJobs with Elevated Privileges\n\n`;
+              output += `| Namespace | CronJob | Schedule | Issues |\n|-----------|---------|----------|--------|\n`;
+              for (const cj of privilegedCronJobs.slice(0, 10)) {
+                output += `| ${cj.ns} | ${cj.name} | ${cj.schedule} | ${cj.issues.join(', ')} |\n`;
+              }
+              output += '\n';
+              
+              findings.push({
+                severity: 'HIGH',
+                category: 'CronJobs',
+                finding: `${privilegedCronJobs.length} CronJobs with elevated privileges`,
+                details: 'Scheduled tasks with host access - persistence vector'
+              });
+              highCount++;
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze CronJobs: ${e.message}\n\n`;
+          }
+
+          // ========== 16. PERSISTENT VOLUMES ==========
+          output += `## 💾 Persistent Volumes\n\n`;
+          try {
+            const pvJson = await runKubectl('get pv -o json');
+            const pvItems = JSON.parse(pvJson).items || [];
+            
+            const hostPathPvs: Array<{name: string; path: string; capacity: string}> = [];
+            const nfsShares: Array<{name: string; server: string; path: string}> = [];
+            
+            for (const pv of pvItems) {
+              const pvName = (pv as any).metadata?.name || 'unknown';
+              const capacity = (pv as any).spec?.capacity?.storage || 'unknown';
+              
+              if ((pv as any).spec?.hostPath) {
+                hostPathPvs.push({
+                  name: pvName,
+                  path: (pv as any).spec.hostPath.path,
+                  capacity
+                });
+              }
+              
+              if ((pv as any).spec?.nfs) {
+                nfsShares.push({
+                  name: pvName,
+                  server: (pv as any).spec.nfs.server,
+                  path: (pv as any).spec.nfs.path
+                });
+              }
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Total PVs | ${pvItems.length} |\n`;
+            output += `| HostPath PVs | ${hostPathPvs.length} |\n`;
+            output += `| NFS Shares | ${nfsShares.length} |\n\n`;
+            
+            if (hostPathPvs.length > 0) {
+              output += `### 🚨 HostPath Persistent Volumes\n\n`;
+              output += `| PV Name | Host Path | Capacity |\n|---------|-----------|----------|\n`;
+              for (const pv of hostPathPvs.slice(0, 10)) {
+                output += `| ${pv.name} | ${pv.path} | ${pv.capacity} |\n`;
+              }
+              output += '\n';
+              
+              const sensitivePaths = hostPathPvs.filter(p => 
+                p.path === '/' || p.path.startsWith('/etc') || p.path.startsWith('/var') || p.path.startsWith('/root')
+              );
+              
+              if (sensitivePaths.length > 0) {
+                findings.push({
+                  severity: 'CRITICAL',
+                  category: 'Storage',
+                  finding: `${sensitivePaths.length} PVs expose sensitive host paths`,
+                  details: 'HostPath PVs can enable container escape'
+                });
+                criticalCount++;
+              }
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze PVs: ${e.message}\n\n`;
+          }
+
+          // ========== 17. RESOURCE LIMITS ==========
+          output += `## 📊 Resource Limits (DoS Prevention)\n\n`;
+          try {
+            const podsCmd = namespace
+              ? `get pods -n ${namespace} -o json`
+              : `get pods --all-namespaces -o json`;
+            const podsJson = await runKubectl(podsCmd);
+            const podItems = JSON.parse(podsJson).items || [];
+            
+            let noLimitsCount = 0;
+            let noRequestsCount = 0;
+            const unlimitedPods: Array<{ns: string; name: string}> = [];
+            
+            for (const pod of podItems) {
+              const podName = (pod as any).metadata?.name || 'unknown';
+              const podNs = (pod as any).metadata?.namespace || 'unknown';
+              let hasLimits = false;
+              let hasRequests = false;
+              
+              for (const container of ((pod as any).spec?.containers || [])) {
+                if (container.resources?.limits) hasLimits = true;
+                if (container.resources?.requests) hasRequests = true;
+              }
+              
+              if (!hasLimits) {
+                noLimitsCount++;
+                unlimitedPods.push({ ns: podNs, name: podName });
+              }
+              if (!hasRequests) noRequestsCount++;
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Total Pods | ${podItems.length} |\n`;
+            output += `| Pods without Limits | ${noLimitsCount} |\n`;
+            output += `| Pods without Requests | ${noRequestsCount} |\n\n`;
+            
+            const unlimitedPercent = podItems.length > 0 ? Math.round((noLimitsCount / podItems.length) * 100) : 0;
+            if (unlimitedPercent > 50) {
+              findings.push({
+                severity: 'LOW',
+                category: 'Resources',
+                finding: `${unlimitedPercent}% of pods have no resource limits`,
+                details: 'Missing limits can lead to DoS via resource exhaustion'
+              });
+              lowCount++;
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze resource limits: ${e.message}\n\n`;
+          }
+
+          // ========== 18. KUBERNETES VERSION ==========
+          output += `## 🔖 Kubernetes Version\n\n`;
+          try {
+            const versionJson = await runKubectl('version -o json');
+            const versionData = JSON.parse(versionJson);
+            
+            const serverVersion = versionData.serverVersion || {};
+            const major = serverVersion.major || '?';
+            const minor = serverVersion.minor || '?';
+            const gitVersion = serverVersion.gitVersion || 'unknown';
+            
+            output += `| Component | Version |\n|-----------|---------||\n`;
+            output += `| Server | ${gitVersion} |\n`;
+            output += `| Major.Minor | ${major}.${minor} |\n\n`;
+            
+            // Check for known vulnerable versions
+            const minorNum = parseInt(minor);
+            if (minorNum < 25) {
+              output += `### ⚠️ Outdated Kubernetes Version\n\n`;
+              output += `Version ${major}.${minor} may have known CVEs. Consider upgrading.\n\n`;
+              
+              findings.push({
+                severity: 'MEDIUM',
+                category: 'Version',
+                finding: `Kubernetes ${major}.${minor} may be outdated`,
+                details: 'Check for CVEs: https://kubernetes.io/docs/reference/issues-security/official-cve-feed/'
+              });
+              mediumCount++;
+            }
+          } catch (e: any) {
+            output += `❌ Failed to get K8s version: ${e.message}\n\n`;
+          }
+
+          // ========== 19. POD SECURITY STANDARDS ==========
+          output += `## 🛡️ Pod Security Standards (PSS)\n\n`;
+          try {
+            const nsJson = await runKubectl('get namespaces -o json');
+            const nsItems = JSON.parse(nsJson).items || [];
+            
+            const enforcedNs: Array<{name: string; level: string}> = [];
+            const unenforced: string[] = [];
+            
+            for (const ns of nsItems) {
+              const nsName = (ns as any).metadata?.name || 'unknown';
+              const labels = (ns as any).metadata?.labels || {};
+              
+              const enforceLevel = labels['pod-security.kubernetes.io/enforce'];
+              const warnLevel = labels['pod-security.kubernetes.io/warn'];
+              
+              if (enforceLevel) {
+                enforcedNs.push({ name: nsName, level: enforceLevel });
+              } else if (!['kube-system', 'kube-public', 'kube-node-lease'].includes(nsName)) {
+                unenforced.push(nsName);
+              }
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Namespaces with PSS Enforce | ${enforcedNs.length} |\n`;
+            output += `| Namespaces without PSS | ${unenforced.length} |\n\n`;
+            
+            if (enforcedNs.length > 0) {
+              output += `### ✅ Namespaces with Pod Security Standards\n\n`;
+              output += `| Namespace | Enforce Level |\n|-----------|---------------|\n`;
+              for (const ns of enforcedNs.slice(0, 10)) {
+                output += `| ${ns.name} | ${ns.level} |\n`;
+              }
+              output += '\n';
+            }
+            
+            if (unenforced.length > 5) {
+              findings.push({
+                severity: 'MEDIUM',
+                category: 'PSS',
+                finding: `${unenforced.length} namespaces without Pod Security Standards`,
+                details: 'Enable PSS labels for namespace-level security'
+              });
+              mediumCount++;
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze PSS: ${e.message}\n\n`;
+          }
+
+          // ========== 20. ATTACK SURFACE SUMMARY ==========
           output += `## 🎯 Attack Surface Summary\n\n`;
           output += `Based on [Kubernetes Pentest Methodology](https://exploit-notes.hdks.org/exploit/container/kubernetes/):\n\n`;
           output += `| Attack Vector | Risk Level | Notes |\n|---------------|------------|-------|\n`;
@@ -6984,7 +7298,7 @@ kubectl --token=\\$TOKEN get pods -A
           output += `**Scan Mode:** kubectl CLI (30s timeout per command)\n\n`;
 
           output += `---\n\n`;
-          output += `*Generated by Stratos MCP v1.9.7 - Enhanced K8s Pentest Methodology*\n`;
+          output += `*Generated by Stratos MCP v1.9.8 - Comprehensive K8s Security Assessment (20 checks)*\n`;
 
           // Cleanup temp kubeconfig
           try {
