@@ -6083,13 +6083,13 @@ kubectl --token=\\$TOKEN get pods -A
         try {
           const aksClient = new ContainerServiceClient(credential, subscriptionId);
           
-          let output = `# 🔴 LIVE AKS SECURITY SCAN via Kubernetes API\n\n`;
+          let output = `# 🔴 LIVE AKS SECURITY SCAN via kubectl\n\n`;
           output += `**Cluster:** ${clusterName}\n`;
           output += `**Resource Group:** ${resourceGroup}\n`;
           output += `**Subscription:** ${subscriptionId}\n`;
           output += `**Target Namespace:** ${namespace || 'All namespaces'}\n`;
           output += `**Scan Time:** ${new Date().toISOString()}\n`;
-          output += `**Scanner:** Stratos MCP v1.9.5 (Live K8s API + kubectl fallback)\n\n`;
+          output += `**Scanner:** Stratos MCP v1.9.6 (kubectl CLI with 30s timeout)\n\n`;
           output += `---\n\n`;
 
           // Get cluster credentials
@@ -6145,48 +6145,41 @@ kubectl --token=\\$TOKEN get pods -A
           const tempKubeconfig = path.join(os.tmpdir(), `stratos-kubeconfig-${Date.now()}.yaml`);
           await fs.writeFile(tempKubeconfig, kubeconfig);
           
-          // Timeout constant for API calls (30 seconds)
-          const API_TIMEOUT_MS = 30000;
+          // Timeout constant for kubectl calls (30 seconds)
+          const KUBECTL_TIMEOUT_MS = 30000;
           
-          // Helper function to add timeout to promises
-          const withTimeout = <T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> => {
-            return Promise.race([
-              promise,
-              new Promise<T>((_, reject) => 
-                setTimeout(() => reject(new Error(errorMsg)), ms)
-              )
-            ]);
-          };
-          
-          // Helper function to run kubectl command as fallback
+          // Helper function to run kubectl command (primary method - more reliable)
           const runKubectl = async (args: string): Promise<string> => {
-            const { exec } = await import('child_process');
+            const { exec, spawn } = await import('child_process');
             return new Promise((resolve, reject) => {
-              const timeout = setTimeout(() => {
-                reject(new Error('kubectl command timed out after 60s'));
-              }, 60000);
-              
-              exec(`kubectl --kubeconfig="${tempKubeconfig}" ${args}`, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
-                clearTimeout(timeout);
-                if (error) {
-                  reject(new Error(stderr || error.message));
-                } else {
-                  resolve(stdout);
+              let killed = false;
+              const child = exec(
+                `kubectl --kubeconfig="${tempKubeconfig}" ${args}`,
+                { maxBuffer: 10 * 1024 * 1024, timeout: KUBECTL_TIMEOUT_MS },
+                (error, stdout, stderr) => {
+                  if (killed) return;
+                  if (error) {
+                    if (error.killed || error.signal === 'SIGTERM') {
+                      reject(new Error(`kubectl timed out after ${KUBECTL_TIMEOUT_MS/1000}s`));
+                    } else {
+                      reject(new Error(stderr || error.message));
+                    }
+                  } else {
+                    resolve(stdout);
+                  }
                 }
-              });
+              );
+              
+              // Backup timeout to kill process
+              setTimeout(() => {
+                if (child.exitCode === null) {
+                  killed = true;
+                  child.kill('SIGTERM');
+                  reject(new Error(`kubectl timed out after ${KUBECTL_TIMEOUT_MS/1000}s`));
+                }
+              }, KUBECTL_TIMEOUT_MS + 1000);
             });
           };
-          
-          // Configure K8s client from kubeconfig
-          const kc = new k8s.KubeConfig();
-          kc.loadFromString(kubeconfig);
-          
-          const coreApi = kc.makeApiClient(k8s.CoreV1Api);
-          const rbacApi = kc.makeApiClient(k8s.RbacAuthorizationV1Api);
-          const networkingApi = kc.makeApiClient(k8s.NetworkingV1Api);
-          
-          let useKubectlFallback = false;
-          let fallbackReason = '';
           
           let criticalCount = 0;
           let highCount = 0;
@@ -6198,58 +6191,23 @@ kubectl --token=\\$TOKEN get pods -A
           output += `## 📁 Namespaces\n\n`;
           let nsList: string[] = [];
           try {
-            const namespacesResp = await withTimeout(
-              coreApi.listNamespace(),
-              API_TIMEOUT_MS,
-              'K8s API timed out after 30s'
-            );
-            nsList = (namespacesResp.items || []).map((ns: any) => ns.metadata?.name).filter(Boolean);
+            const nsJson = await runKubectl('get namespaces -o json');
+            const nsData = JSON.parse(nsJson);
+            nsList = (nsData.items || []).map((ns: any) => ns.metadata?.name).filter(Boolean);
             output += `Found **${nsList.length}** namespaces:\n`;
             output += `\`${nsList.join(', ')}\`\n\n`;
           } catch (e: any) {
-            // Fallback to kubectl
-            fallbackReason = e.message.includes('timed out') ? 'timeout' : 'error';
-            output += `⚠️ K8s API ${fallbackReason === 'timeout' ? 'timed out' : 'failed'}, trying kubectl fallback...\n\n`;
-            useKubectlFallback = true;
-            try {
-              const nsJson = await runKubectl('get namespaces -o json');
-              const nsData = JSON.parse(nsJson);
-              nsList = (nsData.items || []).map((ns: any) => ns.metadata?.name).filter(Boolean);
-              output += `Found **${nsList.length}** namespaces (via kubectl):\n`;
-              output += `\`${nsList.join(', ')}\`\n\n`;
-            } catch (kubectlErr: any) {
-              output += `❌ kubectl fallback also failed: ${kubectlErr.message}\n\n`;
-            }
+            output += `❌ Failed to list namespaces: ${e.message}\n\n`;
           }
 
           // ========== 2. ENUMERATE SECRETS ==========
           output += `## 🔐 Secrets Analysis\n\n`;
           try {
-            let allSecrets: any[] = [];
-            
-            if (!useKubectlFallback) {
-              try {
-                const secretsResp = await withTimeout(
-                  namespace 
-                    ? coreApi.listNamespacedSecret({ namespace })
-                    : coreApi.listSecretForAllNamespaces(),
-                  API_TIMEOUT_MS,
-                  'K8s API timed out'
-                );
-                allSecrets = secretsResp.items || [];
-              } catch (apiErr: any) {
-                useKubectlFallback = true;
-                throw apiErr;
-              }
-            }
-            
-            if (useKubectlFallback) {
-              const secretsCmd = namespace 
-                ? `get secrets -n ${namespace} -o json`
-                : `get secrets --all-namespaces -o json`;
-              const secretsJson = await runKubectl(secretsCmd);
-              allSecrets = JSON.parse(secretsJson).items || [];
-            }
+            const secretsCmd = namespace 
+              ? `get secrets -n ${namespace} -o json`
+              : `get secrets --all-namespaces -o json`;
+            const secretsJson = await runKubectl(secretsCmd);
+            const allSecrets = JSON.parse(secretsJson).items || [];
             
             const nonSaSecrets = allSecrets.filter((s: any) => s.type !== 'kubernetes.io/service-account-token');
             const sensitiveSecrets: Array<{ns: string; name: string; type: string; keys: string[]}> = [];
@@ -6303,30 +6261,11 @@ kubectl --token=\\$TOKEN get pods -A
           // ========== 3. SERVICE ACCOUNTS ==========
           output += `## 👤 Service Accounts\n\n`;
           try {
-            let saList: any[] = [];
-            
-            if (!useKubectlFallback) {
-              try {
-                const saResp = await withTimeout(
-                  namespace
-                    ? coreApi.listNamespacedServiceAccount({ namespace })
-                    : coreApi.listServiceAccountForAllNamespaces(),
-                  API_TIMEOUT_MS,
-                  'K8s API timed out'
-                );
-                saList = saResp.items || [];
-              } catch (apiErr: any) {
-                useKubectlFallback = true;
-              }
-            }
-            
-            if (useKubectlFallback) {
-              const saCmd = namespace 
-                ? `get serviceaccounts -n ${namespace} -o json`
-                : `get serviceaccounts --all-namespaces -o json`;
-              const saJson = await runKubectl(saCmd);
-              saList = JSON.parse(saJson).items || [];
-            }
+            const saCmd = namespace 
+              ? `get serviceaccounts -n ${namespace} -o json`
+              : `get serviceaccounts --all-namespaces -o json`;
+            const saJson = await runKubectl(saCmd);
+            const saList = JSON.parse(saJson).items || [];
             
             const defaultSaAutoMount: Array<{ns: string; name: string}> = [];
             
@@ -6367,39 +6306,14 @@ kubectl --token=\\$TOKEN get pods -A
           // ========== 4. RBAC BINDINGS ==========
           output += `## 🔒 RBAC Analysis\n\n`;
           try {
-            let crbItems: any[] = [];
-            let rbItems: any[] = [];
+            const crbJson = await runKubectl('get clusterrolebindings -o json');
+            const crbItems = JSON.parse(crbJson).items || [];
             
-            if (!useKubectlFallback) {
-              try {
-                const crbResp = await withTimeout(
-                  rbacApi.listClusterRoleBinding(),
-                  API_TIMEOUT_MS,
-                  'K8s API timed out'
-                );
-                crbItems = crbResp.items || [];
-                const rbResp = await withTimeout(
-                  namespace
-                    ? rbacApi.listNamespacedRoleBinding({ namespace })
-                    : rbacApi.listRoleBindingForAllNamespaces(),
-                  API_TIMEOUT_MS,
-                  'K8s API timed out'
-                );
-                rbItems = rbResp.items || [];
-              } catch (apiErr: any) {
-                useKubectlFallback = true;
-              }
-            }
-            
-            if (useKubectlFallback) {
-              const crbJson = await runKubectl('get clusterrolebindings -o json');
-              crbItems = JSON.parse(crbJson).items || [];
-              const rbCmd = namespace 
-                ? `get rolebindings -n ${namespace} -o json`
-                : `get rolebindings --all-namespaces -o json`;
-              const rbJson = await runKubectl(rbCmd);
-              rbItems = JSON.parse(rbJson).items || [];
-            }
+            const rbCmd = namespace 
+              ? `get rolebindings -n ${namespace} -o json`
+              : `get rolebindings --all-namespaces -o json`;
+            const rbJson = await runKubectl(rbCmd);
+            const rbItems = JSON.parse(rbJson).items || [];
             
             const dangerousBindings: Array<{name: string; role: string; subjects: string[]}> = [];
             const dangerousRoles = ['cluster-admin', 'admin', 'edit'];
@@ -6448,30 +6362,11 @@ kubectl --token=\\$TOKEN get pods -A
           // ========== 5. PRIVILEGED PODS ==========
           output += `## 🐳 Pod Security Analysis\n\n`;
           try {
-            let podItems: any[] = [];
-            
-            if (!useKubectlFallback) {
-              try {
-                const podsResp = await withTimeout(
-                  namespace
-                    ? coreApi.listNamespacedPod({ namespace })
-                    : coreApi.listPodForAllNamespaces(),
-                  API_TIMEOUT_MS,
-                  'K8s API timed out'
-                );
-                podItems = podsResp.items || [];
-              } catch (apiErr: any) {
-                useKubectlFallback = true;
-              }
-            }
-            
-            if (useKubectlFallback) {
-              const podsCmd = namespace 
-                ? `get pods -n ${namespace} -o json`
-                : `get pods --all-namespaces -o json`;
-              const podsJson = await runKubectl(podsCmd);
-              podItems = JSON.parse(podsJson).items || [];
-            }
+            const podsCmd = namespace
+              ? `get pods -n ${namespace} -o json`
+              : `get pods --all-namespaces -o json`;
+            const podsJson = await runKubectl(podsCmd);
+            const podItems = JSON.parse(podsJson).items || [];
             
             const privilegedPods: Array<{ns: string; name: string; container: string; issues: string[]}> = [];
             const hostNetworkPods: Array<{ns: string; name: string}> = [];
@@ -6577,30 +6472,11 @@ kubectl --token=\\$TOKEN get pods -A
           // ========== 6. NETWORK POLICIES ==========
           output += `## 🌐 Network Policies\n\n`;
           try {
-            let npItems: any[] = [];
-            
-            if (!useKubectlFallback) {
-              try {
-                const npResp = await withTimeout(
-                  namespace
-                    ? networkingApi.listNamespacedNetworkPolicy({ namespace })
-                    : networkingApi.listNetworkPolicyForAllNamespaces(),
-                  API_TIMEOUT_MS,
-                  'K8s API timed out'
-                );
-                npItems = npResp.items || [];
-              } catch (apiErr: any) {
-                useKubectlFallback = true;
-              }
-            }
-            
-            if (useKubectlFallback) {
-              const npCmd = namespace 
-                ? `get networkpolicies -n ${namespace} -o json`
-                : `get networkpolicies --all-namespaces -o json`;
-              const npJson = await runKubectl(npCmd);
-              npItems = JSON.parse(npJson).items || [];
-            }
+            const npCmd = namespace 
+              ? `get networkpolicies -n ${namespace} -o json`
+              : `get networkpolicies --all-namespaces -o json`;
+            const npJson = await runKubectl(npCmd);
+            const npItems = JSON.parse(npJson).items || [];
             
             const npCount = npItems.length;
             
@@ -6632,30 +6508,11 @@ kubectl --token=\\$TOKEN get pods -A
           // ========== 7. EXPOSED SERVICES ==========
           output += `## 🌍 Exposed Services\n\n`;
           try {
-            let svcItems: any[] = [];
-            
-            if (!useKubectlFallback) {
-              try {
-                const svcResp = await withTimeout(
-                  namespace
-                    ? coreApi.listNamespacedService({ namespace })
-                    : coreApi.listServiceForAllNamespaces(),
-                  API_TIMEOUT_MS,
-                  'K8s API timed out'
-                );
-                svcItems = svcResp.items || [];
-              } catch (apiErr: any) {
-                useKubectlFallback = true;
-              }
-            }
-            
-            if (useKubectlFallback) {
-              const svcCmd = namespace 
-                ? `get services -n ${namespace} -o json`
-                : `get services --all-namespaces -o json`;
-              const svcJson = await runKubectl(svcCmd);
-              svcItems = JSON.parse(svcJson).items || [];
-            }
+            const svcCmd = namespace 
+              ? `get services -n ${namespace} -o json`
+              : `get services --all-namespaces -o json`;
+            const svcJson = await runKubectl(svcCmd);
+            const svcItems = JSON.parse(svcJson).items || [];
             
             const loadBalancers: Array<{ns: string; name: string; ip: string; ports: string[]}> = [];
             const nodePortServices: Array<{ns: string; name: string; ports: string[]}> = [];
@@ -6702,30 +6559,11 @@ kubectl --token=\\$TOKEN get pods -A
           // ========== 8. CONFIGMAPS ==========
           output += `## 📄 ConfigMaps Analysis\n\n`;
           try {
-            let cmItems: any[] = [];
-            
-            if (!useKubectlFallback) {
-              try {
-                const cmResp = await withTimeout(
-                  namespace
-                    ? coreApi.listNamespacedConfigMap({ namespace })
-                    : coreApi.listConfigMapForAllNamespaces(),
-                  API_TIMEOUT_MS,
-                  'K8s API timed out'
-                );
-                cmItems = cmResp.items || [];
-              } catch (apiErr: any) {
-                useKubectlFallback = true;
-              }
-            }
-            
-            if (useKubectlFallback) {
-              const cmCmd = namespace 
-                ? `get configmaps -n ${namespace} -o json`
-                : `get configmaps --all-namespaces -o json`;
-              const cmJson = await runKubectl(cmCmd);
-              cmItems = JSON.parse(cmJson).items || [];
-            }
+            const cmCmd = namespace 
+              ? `get configmaps -n ${namespace} -o json`
+              : `get configmaps --all-namespaces -o json`;
+            const cmJson = await runKubectl(cmCmd);
+            const cmItems = JSON.parse(cmJson).items || [];
             
             const sensitiveConfigMaps: Array<{ns: string; name: string; keys: string[]}> = [];
             const secretPatterns = ['password', 'secret', 'key', 'token', 'credential', 'apikey'];
@@ -6804,10 +6642,10 @@ kubectl --token=\\$TOKEN get pods -A
           output += `### Risk Assessment\n\n`;
           output += `**Risk Score:** ${riskScore}\n`;
           output += `**Risk Level:** ${riskEmoji} **${riskLevel}**\n`;
-          output += `**Scan Mode:** ${useKubectlFallback ? 'kubectl CLI fallback' : 'K8s API client'}\n\n`;
+          output += `**Scan Mode:** kubectl CLI (30s timeout per command)\n\n`;
 
           output += `---\n\n`;
-          output += `*Generated by Stratos MCP v1.9.5 - Live Kubernetes API Scan*\n`;
+          output += `*Generated by Stratos MCP v1.9.6 - Live Kubernetes Security Scan*\n`;
 
           // Cleanup temp kubeconfig
           try {
