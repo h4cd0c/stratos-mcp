@@ -24,6 +24,7 @@ import { marked } from "marked";
 import { createObjectCsvWriter } from "csv-writer";
 import * as fs from "fs";
 import * as path from "path";
+import * as k8s from "@kubernetes/client-node";
 
 // Initialize Azure credential - PRIORITIZE Azure CLI over VS Code extension
 // This fixes the issue where VS Code's internal service principal is used instead of user's az login
@@ -807,6 +808,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             clusterName: {
               type: "string",
               description: "AKS cluster name",
+            },
+          },
+          required: ["subscriptionId", "resourceGroup", "clusterName"],
+        },
+      },
+      {
+        name: "scan_aks_live",
+        description: "🔴 LIVE AKS SECURITY SCAN via Kubernetes API - Directly connects to cluster API server and performs real-time security analysis: enumerates secrets, service accounts, RBAC bindings, privileged pods, network policies, exposed services, and more. Requires cluster access.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Resource group containing the AKS cluster",
+            },
+            clusterName: {
+              type: "string",
+              description: "AKS cluster name",
+            },
+            namespace: {
+              type: "string",
+              description: "Specific namespace to scan (optional, scans all namespaces if not specified)",
             },
           },
           required: ["subscriptionId", "resourceGroup", "clusterName"],
@@ -6040,6 +6067,540 @@ kubectl --token=\\$TOKEN get pods -A
         } catch (error: any) {
           return {
             content: [{ type: 'text', text: `Error running full AKS scan: ${error.message}` }],
+            isError: true,
+          };
+        }
+      }
+
+      case "scan_aks_live": {
+        const { subscriptionId, resourceGroup, clusterName, namespace } = request.params.arguments as {
+          subscriptionId: string;
+          resourceGroup: string;
+          clusterName: string;
+          namespace?: string;
+        };
+
+        try {
+          const aksClient = new ContainerServiceClient(credential, subscriptionId);
+          
+          let output = `# 🔴 LIVE AKS SECURITY SCAN via Kubernetes API\n\n`;
+          output += `**Cluster:** ${clusterName}\n`;
+          output += `**Resource Group:** ${resourceGroup}\n`;
+          output += `**Subscription:** ${subscriptionId}\n`;
+          output += `**Target Namespace:** ${namespace || 'All namespaces'}\n`;
+          output += `**Scan Time:** ${new Date().toISOString()}\n`;
+          output += `**Scanner:** Stratos MCP v1.9.4 (Live K8s API)\n\n`;
+          output += `---\n\n`;
+
+          // Get cluster credentials
+          output += `## 🔑 Connecting to Cluster...\n\n`;
+          
+          const cluster = await aksClient.managedClusters.get(resourceGroup, clusterName);
+          
+          // Get admin credentials (kubeconfig)
+          let kubeconfig: string;
+          try {
+            const adminCreds = await aksClient.managedClusters.listClusterAdminCredentials(resourceGroup, clusterName);
+            if (!adminCreds.kubeconfigs || adminCreds.kubeconfigs.length === 0) {
+              throw new Error("No kubeconfig returned");
+            }
+            kubeconfig = Buffer.from(adminCreds.kubeconfigs[0].value!).toString('utf-8');
+            output += `✅ Admin credentials obtained\n\n`;
+          } catch (adminError: any) {
+            // Try user credentials if admin fails (AAD-enabled clusters)
+            try {
+              const userCreds = await aksClient.managedClusters.listClusterUserCredentials(resourceGroup, clusterName);
+              if (!userCreds.kubeconfigs || userCreds.kubeconfigs.length === 0) {
+                throw new Error("No kubeconfig returned");
+              }
+              kubeconfig = Buffer.from(userCreds.kubeconfigs[0].value!).toString('utf-8');
+              output += `✅ User credentials obtained (admin credentials unavailable)\n\n`;
+            } catch (userError: any) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `# ❌ Failed to Connect to Cluster\n\n` +
+                    `Could not obtain cluster credentials.\n\n` +
+                    `**Admin Error:** ${adminError.message}\n` +
+                    `**User Error:** ${userError.message}\n\n` +
+                    `**Try manually:**\n` +
+                    `\`\`\`bash\n` +
+                    `az aks get-credentials --resource-group ${resourceGroup} --name ${clusterName}\n` +
+                    `kubectl get nodes\n` +
+                    `\`\`\``
+                }],
+                isError: true,
+              };
+            }
+          }
+
+          // Configure K8s client from kubeconfig
+          const kc = new k8s.KubeConfig();
+          kc.loadFromString(kubeconfig);
+          
+          const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+          const rbacApi = kc.makeApiClient(k8s.RbacAuthorizationV1Api);
+          const networkingApi = kc.makeApiClient(k8s.NetworkingV1Api);
+          
+          let criticalCount = 0;
+          let highCount = 0;
+          let mediumCount = 0;
+          let lowCount = 0;
+          const findings: Array<{severity: string; category: string; finding: string; details: string}> = [];
+
+          // ========== 1. ENUMERATE NAMESPACES ==========
+          output += `## 📁 Namespaces\n\n`;
+          try {
+            const namespacesResp = await coreApi.listNamespace();
+            const nsList = (namespacesResp.items || []).map((ns: any) => ns.metadata?.name).filter(Boolean);
+            output += `Found **${nsList.length}** namespaces:\n`;
+            output += `\`${nsList.join(', ')}\`\n\n`;
+          } catch (e: any) {
+            output += `❌ Failed to list namespaces: ${e.message}\n\n`;
+          }
+
+          // ========== 2. ENUMERATE SECRETS ==========
+          output += `## 🔐 Secrets Analysis\n\n`;
+          try {
+            const secretsResp = namespace 
+              ? await coreApi.listNamespacedSecret({ namespace })
+              : await coreApi.listSecretForAllNamespaces();
+            
+            const allSecrets = secretsResp.items || [];
+            const nonSaSecrets = allSecrets.filter((s: any) => s.type !== 'kubernetes.io/service-account-token');
+            const sensitiveSecrets: Array<{ns: string; name: string; type: string; keys: string[]}> = [];
+            
+            const sensitiveKeywords = ['password', 'secret', 'key', 'token', 'connection', 'azure', 'credential', 'api'];
+            
+            for (const secret of nonSaSecrets) {
+              const keys = Object.keys((secret as any).data || {});
+              const hasSensitive = keys.some((k: string) => 
+                sensitiveKeywords.some(kw => k.toLowerCase().includes(kw))
+              );
+              if (hasSensitive || (secret as any).type === 'Opaque') {
+                sensitiveSecrets.push({
+                  ns: (secret as any).metadata?.namespace || 'unknown',
+                  name: (secret as any).metadata?.name || 'unknown',
+                  type: (secret as any).type || 'unknown',
+                  keys: keys
+                });
+              }
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Total Secrets | ${allSecrets.length} |\n`;
+            output += `| Service Account Tokens | ${allSecrets.length - nonSaSecrets.length} |\n`;
+            output += `| Application Secrets | ${nonSaSecrets.length} |\n`;
+            output += `| Potentially Sensitive | ${sensitiveSecrets.length} |\n\n`;
+            
+            if (sensitiveSecrets.length > 0) {
+              output += `### 🎯 Potentially Sensitive Secrets\n\n`;
+              output += `| Namespace | Secret Name | Type | Keys |\n|-----------|-------------|------|------|\n`;
+              for (const s of sensitiveSecrets.slice(0, 20)) {
+                output += `| ${s.ns} | ${s.name} | ${s.type} | ${s.keys.slice(0, 3).join(', ')}${s.keys.length > 3 ? '...' : ''} |\n`;
+              }
+              if (sensitiveSecrets.length > 20) {
+                output += `\n*...and ${sensitiveSecrets.length - 20} more*\n`;
+              }
+              output += '\n';
+              
+              findings.push({
+                severity: 'HIGH',
+                category: 'Secrets',
+                finding: `${sensitiveSecrets.length} potentially sensitive secrets found`,
+                details: 'Review secrets for hardcoded credentials'
+              });
+              highCount++;
+            }
+          } catch (e: any) {
+            output += `❌ Failed to list secrets: ${e.message}\n\n`;
+          }
+
+          // ========== 3. SERVICE ACCOUNTS ==========
+          output += `## 👤 Service Accounts\n\n`;
+          try {
+            const saResp = namespace
+              ? await coreApi.listNamespacedServiceAccount({ namespace })
+              : await coreApi.listServiceAccountForAllNamespaces();
+            
+            const saList = saResp.items || [];
+            const defaultSaAutoMount: Array<{ns: string; name: string}> = [];
+            
+            for (const sa of saList) {
+              if ((sa as any).automountServiceAccountToken !== false) {
+                if ((sa as any).metadata?.name === 'default') {
+                  defaultSaAutoMount.push({
+                    ns: (sa as any).metadata?.namespace || 'unknown',
+                    name: (sa as any).metadata?.name || 'unknown'
+                  });
+                }
+              }
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Total Service Accounts | ${saList.length} |\n`;
+            output += `| Default SAs with Auto-Mount | ${defaultSaAutoMount.length} |\n\n`;
+            
+            if (defaultSaAutoMount.length > 0) {
+              output += `### ⚠️ Default Service Accounts with Token Auto-Mount\n\n`;
+              for (const sa of defaultSaAutoMount.slice(0, 10)) {
+                output += `- \`${sa.ns}/default\`\n`;
+              }
+              output += '\n';
+              
+              findings.push({
+                severity: 'MEDIUM',
+                category: 'Service Accounts',
+                finding: `${defaultSaAutoMount.length} default SAs with auto-mount enabled`,
+                details: 'Disable automountServiceAccountToken on default SAs'
+              });
+              mediumCount++;
+            }
+          } catch (e: any) {
+            output += `❌ Failed to list service accounts: ${e.message}\n\n`;
+          }
+
+          // ========== 4. RBAC BINDINGS ==========
+          output += `## 🔒 RBAC Analysis\n\n`;
+          try {
+            const crbResp = await rbacApi.listClusterRoleBinding();
+            const dangerousBindings: Array<{name: string; role: string; subjects: string[]}> = [];
+            const dangerousRoles = ['cluster-admin', 'admin', 'edit'];
+            
+            for (const crb of (crbResp.items || [])) {
+              if (dangerousRoles.includes((crb as any).roleRef?.name)) {
+                const subjects = ((crb as any).subjects || []).map((s: any) => 
+                  `${s.kind}:${s.namespace ? s.namespace + '/' : ''}${s.name}`
+                );
+                dangerousBindings.push({
+                  name: (crb as any).metadata?.name || 'unknown',
+                  role: (crb as any).roleRef?.name,
+                  subjects: subjects
+                });
+              }
+            }
+            
+            const rbResp = namespace
+              ? await rbacApi.listNamespacedRoleBinding({ namespace })
+              : await rbacApi.listRoleBindingForAllNamespaces();
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Cluster Role Bindings | ${(crbResp.items || []).length} |\n`;
+            output += `| Role Bindings | ${(rbResp.items || []).length} |\n`;
+            output += `| Dangerous Cluster Bindings | ${dangerousBindings.length} |\n\n`;
+            
+            if (dangerousBindings.length > 0) {
+              output += `### 🚨 High-Privilege Cluster Role Bindings\n\n`;
+              output += `| Binding Name | Role | Subjects |\n|--------------|------|----------|\n`;
+              for (const b of dangerousBindings.slice(0, 15)) {
+                output += `| ${b.name} | ${b.role} | ${b.subjects.slice(0, 2).join(', ')}${b.subjects.length > 2 ? '...' : ''} |\n`;
+              }
+              output += '\n';
+              
+              const clusterAdminCount = dangerousBindings.filter(b => b.role === 'cluster-admin').length;
+              if (clusterAdminCount > 5) {
+                findings.push({
+                  severity: 'HIGH',
+                  category: 'RBAC',
+                  finding: `${clusterAdminCount} cluster-admin bindings found`,
+                  details: 'Excessive cluster-admin bindings - review and reduce'
+                });
+                highCount++;
+              }
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze RBAC: ${e.message}\n\n`;
+          }
+
+          // ========== 5. PRIVILEGED PODS ==========
+          output += `## 🐳 Pod Security Analysis\n\n`;
+          try {
+            const podsResp = namespace
+              ? await coreApi.listNamespacedPod({ namespace })
+              : await coreApi.listPodForAllNamespaces();
+            
+            const podItems = podsResp.items || [];
+            const privilegedPods: Array<{ns: string; name: string; container: string; issues: string[]}> = [];
+            const hostNetworkPods: Array<{ns: string; name: string}> = [];
+            const hostPathPods: Array<{ns: string; name: string; paths: string[]}> = [];
+            
+            for (const pod of podItems) {
+              const podName = (pod as any).metadata?.name || 'unknown';
+              const podNs = (pod as any).metadata?.namespace || 'unknown';
+              
+              if ((pod as any).spec?.hostNetwork) {
+                hostNetworkPods.push({ ns: podNs, name: podName });
+              }
+              
+              const hostPaths = ((pod as any).spec?.volumes || [])
+                .filter((v: any) => v.hostPath)
+                .map((v: any) => v.hostPath?.path || 'unknown');
+              if (hostPaths.length > 0) {
+                hostPathPods.push({ ns: podNs, name: podName, paths: hostPaths });
+              }
+              
+              for (const container of ((pod as any).spec?.containers || [])) {
+                const sc = container.securityContext;
+                const issues: string[] = [];
+                
+                if (sc?.privileged) issues.push('privileged');
+                if (sc?.allowPrivilegeEscalation !== false) issues.push('allowPrivilegeEscalation');
+                if (sc?.runAsUser === 0) issues.push('runAsRoot');
+                if (sc?.capabilities?.add?.includes('SYS_ADMIN')) issues.push('CAP_SYS_ADMIN');
+                
+                if (issues.length > 0 && issues.includes('privileged')) {
+                  privilegedPods.push({
+                    ns: podNs,
+                    name: podName,
+                    container: container.name,
+                    issues: issues
+                  });
+                }
+              }
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Total Pods | ${podItems.length} |\n`;
+            output += `| Privileged Containers | ${privilegedPods.length} |\n`;
+            output += `| Host Network Pods | ${hostNetworkPods.length} |\n`;
+            output += `| Host Path Mounts | ${hostPathPods.length} |\n\n`;
+            
+            if (privilegedPods.length > 0) {
+              output += `### 🚨 Privileged Containers\n\n`;
+              output += `| Namespace | Pod | Container | Issues |\n|-----------|-----|-----------|--------|\n`;
+              for (const p of privilegedPods.slice(0, 10)) {
+                output += `| ${p.ns} | ${p.name} | ${p.container} | ${p.issues.join(', ')} |\n`;
+              }
+              output += '\n';
+              
+              findings.push({
+                severity: 'CRITICAL',
+                category: 'Pod Security',
+                finding: `${privilegedPods.length} pods running with privileged: true`,
+                details: 'Privileged containers can escape to host'
+              });
+              criticalCount++;
+            }
+            
+            if (hostNetworkPods.length > 0) {
+              output += `### ⚠️ Pods with Host Network\n\n`;
+              for (const p of hostNetworkPods.slice(0, 5)) {
+                output += `- \`${p.ns}/${p.name}\`\n`;
+              }
+              output += '\n';
+              
+              findings.push({
+                severity: 'HIGH',
+                category: 'Pod Security',
+                finding: `${hostNetworkPods.length} pods using hostNetwork`,
+                details: 'Can access host network interfaces'
+              });
+              highCount++;
+            }
+            
+            if (hostPathPods.length > 0) {
+              output += `### ⚠️ Pods with Host Path Mounts\n\n`;
+              output += `| Namespace | Pod | Host Paths |\n|-----------|-----|------------|\n`;
+              for (const p of hostPathPods.slice(0, 10)) {
+                output += `| ${p.ns} | ${p.name} | ${p.paths.join(', ')} |\n`;
+              }
+              output += '\n';
+              
+              const rootMounts = hostPathPods.filter(p => p.paths.some(path => path === '/' || path === '/etc'));
+              if (rootMounts.length > 0) {
+                findings.push({
+                  severity: 'CRITICAL',
+                  category: 'Pod Security',
+                  finding: `${rootMounts.length} pods mounting sensitive host paths`,
+                  details: 'Host filesystem access can lead to escape'
+                });
+                criticalCount++;
+              }
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze pods: ${e.message}\n\n`;
+          }
+
+          // ========== 6. NETWORK POLICIES ==========
+          output += `## 🌐 Network Policies\n\n`;
+          try {
+            const npResp = namespace
+              ? await networkingApi.listNamespacedNetworkPolicy({ namespace })
+              : await networkingApi.listNetworkPolicyForAllNamespaces();
+            
+            const npItems = npResp.items || [];
+            const npCount = npItems.length;
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Network Policies | ${npCount} |\n\n`;
+            
+            if (npCount === 0) {
+              findings.push({
+                severity: 'CRITICAL',
+                category: 'Network',
+                finding: 'No network policies defined in cluster',
+                details: 'All pods can communicate freely'
+              });
+              criticalCount++;
+            }
+            
+            if (npCount > 0) {
+              output += `### 📋 Network Policies\n\n`;
+              output += `| Namespace | Policy Name |\n|-----------|-------------|\n`;
+              for (const np of npItems.slice(0, 10)) {
+                output += `| ${(np as any).metadata?.namespace} | ${(np as any).metadata?.name} |\n`;
+              }
+              output += '\n';
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze network policies: ${e.message}\n\n`;
+          }
+
+          // ========== 7. EXPOSED SERVICES ==========
+          output += `## 🌍 Exposed Services\n\n`;
+          try {
+            const svcResp = namespace
+              ? await coreApi.listNamespacedService({ namespace })
+              : await coreApi.listServiceForAllNamespaces();
+            
+            const svcItems = svcResp.items || [];
+            const loadBalancers: Array<{ns: string; name: string; ip: string; ports: string[]}> = [];
+            const nodePortServices: Array<{ns: string; name: string; ports: string[]}> = [];
+            
+            for (const svc of svcItems) {
+              const svcName = (svc as any).metadata?.name || 'unknown';
+              const svcNs = (svc as any).metadata?.namespace || 'unknown';
+              
+              if ((svc as any).spec?.type === 'LoadBalancer') {
+                const ips = ((svc as any).status?.loadBalancer?.ingress || []).map((i: any) => i.ip || i.hostname || 'pending');
+                const ports = ((svc as any).spec?.ports || []).map((p: any) => `${p.port}/${p.protocol}`);
+                loadBalancers.push({ ns: svcNs, name: svcName, ip: ips.join(', '), ports });
+              } else if ((svc as any).spec?.type === 'NodePort') {
+                const ports = ((svc as any).spec?.ports || []).map((p: any) => `${p.nodePort}→${p.port}`);
+                nodePortServices.push({ ns: svcNs, name: svcName, ports });
+              }
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Total Services | ${svcItems.length} |\n`;
+            output += `| LoadBalancer Services | ${loadBalancers.length} |\n`;
+            output += `| NodePort Services | ${nodePortServices.length} |\n\n`;
+            
+            if (loadBalancers.length > 0) {
+              output += `### 🔴 LoadBalancer Services (Internet Exposed)\n\n`;
+              output += `| Namespace | Service | External IP | Ports |\n|-----------|---------|-------------|-------|\n`;
+              for (const lb of loadBalancers) {
+                output += `| ${lb.ns} | ${lb.name} | ${lb.ip || 'pending'} | ${lb.ports.join(', ')} |\n`;
+              }
+              output += '\n';
+              
+              findings.push({
+                severity: 'HIGH',
+                category: 'Services',
+                finding: `${loadBalancers.length} LoadBalancer services exposed`,
+                details: 'Review if all require public access'
+              });
+              highCount++;
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze services: ${e.message}\n\n`;
+          }
+
+          // ========== 8. CONFIGMAPS ==========
+          output += `## 📄 ConfigMaps Analysis\n\n`;
+          try {
+            const cmResp = namespace
+              ? await coreApi.listNamespacedConfigMap({ namespace })
+              : await coreApi.listConfigMapForAllNamespaces();
+            
+            const cmItems = cmResp.items || [];
+            const sensitiveConfigMaps: Array<{ns: string; name: string; keys: string[]}> = [];
+            const secretPatterns = ['password', 'secret', 'key', 'token', 'credential', 'apikey'];
+            
+            for (const cm of cmItems) {
+              const data = (cm as any).data || {};
+              const suspiciousKeys: string[] = [];
+              
+              for (const [key, value] of Object.entries(data)) {
+                if (secretPatterns.some(p => key.toLowerCase().includes(p))) {
+                  suspiciousKeys.push(key);
+                }
+              }
+              
+              if (suspiciousKeys.length > 0) {
+                sensitiveConfigMaps.push({
+                  ns: (cm as any).metadata?.namespace || 'unknown',
+                  name: (cm as any).metadata?.name || 'unknown',
+                  keys: suspiciousKeys
+                });
+              }
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Total ConfigMaps | ${cmItems.length} |\n`;
+            output += `| ConfigMaps with Potential Secrets | ${sensitiveConfigMaps.length} |\n\n`;
+            
+            if (sensitiveConfigMaps.length > 0) {
+              output += `### ⚠️ ConfigMaps with Potential Sensitive Data\n\n`;
+              output += `| Namespace | ConfigMap | Suspicious Keys |\n|-----------|-----------|------------------|\n`;
+              for (const cm of sensitiveConfigMaps.slice(0, 10)) {
+                output += `| ${cm.ns} | ${cm.name} | ${cm.keys.slice(0, 3).join(', ')} |\n`;
+              }
+              output += '\n';
+              
+              findings.push({
+                severity: 'MEDIUM',
+                category: 'ConfigMaps',
+                finding: `${sensitiveConfigMaps.length} ConfigMaps may contain secrets`,
+                details: 'Move secrets to Secrets or Key Vault'
+              });
+              mediumCount++;
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze ConfigMaps: ${e.message}\n\n`;
+          }
+
+          // ========== SUMMARY ==========
+          output += `---\n\n`;
+          output += `## 📊 Live Scan Summary\n\n`;
+          output += `| Severity | Count |\n|----------|-------|\n`;
+          output += `| 🔴 CRITICAL | ${criticalCount} |\n`;
+          output += `| 🟠 HIGH | ${highCount} |\n`;
+          output += `| 🟡 MEDIUM | ${mediumCount} |\n`;
+          output += `| 🟢 LOW | ${lowCount} |\n`;
+          output += `| **TOTAL** | **${findings.length}** |\n\n`;
+
+          if (findings.length > 0) {
+            output += `### 🚨 All Findings\n\n`;
+            output += `| # | Severity | Category | Finding | Details |\n|---|----------|----------|---------|----------|\n`;
+            let i = 1;
+            for (const f of findings) {
+              const icon = f.severity === 'CRITICAL' ? '🔴' : f.severity === 'HIGH' ? '🟠' : f.severity === 'MEDIUM' ? '🟡' : '🟢';
+              output += `| ${i++} | ${icon} ${f.severity} | ${f.category} | ${f.finding} | ${f.details} |\n`;
+            }
+            output += '\n';
+          }
+
+          const riskScore = (criticalCount * 40) + (highCount * 20) + (mediumCount * 5) + (lowCount * 1);
+          let riskLevel = 'LOW';
+          let riskEmoji = '🟢';
+          if (riskScore >= 100) { riskLevel = 'CRITICAL'; riskEmoji = '🔴'; }
+          else if (riskScore >= 50) { riskLevel = 'HIGH'; riskEmoji = '🟠'; }
+          else if (riskScore >= 20) { riskLevel = 'MEDIUM'; riskEmoji = '🟡'; }
+          
+          output += `### Risk Assessment\n\n`;
+          output += `**Risk Score:** ${riskScore}\n`;
+          output += `**Risk Level:** ${riskEmoji} **${riskLevel}**\n\n`;
+
+          output += `---\n\n`;
+          output += `*Generated by Stratos MCP v1.9.4 - Live Kubernetes API Scan*\n`;
+
+          return {
+            content: [{ type: 'text', text: output }],
+          };
+        } catch (error: any) {
+          return {
+            content: [{ type: 'text', text: `Error running live AKS scan: ${error.message}` }],
             isError: true,
           };
         }
