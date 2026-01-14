@@ -2,7 +2,7 @@
 
 # Stratos - Azure Security Assessment MCP Server
 
-[![Version](https://img.shields.io/badge/version-1.9.4-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Version](https://img.shields.io/badge/version-1.10.1-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
 [![Tools](https://img.shields.io/badge/tools-37-green.svg)](https://github.com/Jaikumar3/stratos-mcp)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 [![Azure SDK](https://img.shields.io/badge/Azure%20SDK-v4+-yellow.svg)](https://azure.microsoft.com/en-us/downloads/)
@@ -122,11 +122,11 @@
 | Prefix | Purpose |
 |--------|---------|
 | `enumerate_*` | List/discover resources |
-| `analyze_*` | Deep security analysis |
-| `scan_*` | Quick security check |
-| `get_*` | Retrieve data/status |
-| `test_*` | Vulnerability testing |
-| `generate_*` | Create reports |
+| `analyze_*` | Deep configuration analysis |
+| `scan_*` | Security assessment |
+| `get_*` | Retrieve specific data |
+| `detect_*` | Find threats/issues |
+| `generate_*` | Create output/reports |
 
 ### Complete Tool List
 
@@ -147,10 +147,10 @@
 | 13 | `scan_storage_containers` | Security | Deep scan for sensitive files in blobs |
 | 14 | `analyze_nsg_rules` | Security | Identify risky firewall rules |
 | 15 | `scan_sql_databases` | Security | Check SQL security (TDE, firewall, auth) |
-| 16 | `analyze_key_vault_security` | Security | Audit Key Vault configuration |
+| 16 | `analyze_keyvault_security` | Security | Audit Key Vault configuration |
 | 17 | `analyze_vm_security` | Security | Check VM disk encryption and patches |
-| 18 | `analyze_cosmos_db_security` | Security | Scan Cosmos DB security settings |
-| 19 | `scan_container_registries` | Security | Audit ACR security (admin user, scanning) |
+| 18 | `analyze_cosmosdb_security` | Security | Scan Cosmos DB security settings |
+| 19 | `scan_acr_security` | Security | Audit ACR security (admin user, scanning) |
 | 20 | `scan_service_principals` | Security | Find application identities and risks |
 | 21 | `scan_credential_exposure` | Security | Detect exposed credentials |
 | 22 | `generate_security_report` | Reporting | Professional reports (PDF/HTML/CSV/JSON) |
@@ -163,9 +163,9 @@
 | 29 | `get_aks_credentials` | Kubernetes | Extract kubeconfig credentials |
 | 30 | `enumerate_aks_identities` | Kubernetes | Map cluster identities and roles |
 | 31 | `scan_aks_node_security` | Kubernetes | Check node security configuration |
-| 32 | `test_aks_imds_access` | Kubernetes | Test for pod escape vulnerabilities |
+| 32 | `scan_aks_imds` | Kubernetes | IMDS exploitation & full recon |
 | 33 | `scan_aks_service_accounts` | Kubernetes | Analyze AKS service account security |
-| 34 | `hunt_aks_secrets` | Kubernetes | Comprehensive K8s secret hunting guide |
+| 34 | `scan_aks_secrets` | Kubernetes | Comprehensive K8s secret enumeration |
 | 35 | `scan_aks_full` | Kubernetes | All AKS checks in one comprehensive scan |
 | 36 | `scan_aks_live` | Kubernetes | Direct K8s API scanning (secrets, RBAC, pods) |
 | 37 | `scan_azure_devops` | DevOps | Detect hardcoded secrets in repos/pipelines |
