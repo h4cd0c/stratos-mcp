@@ -2,8 +2,8 @@
 
 # Stratos - Azure Security Assessment MCP Server
 
-[![Version](https://img.shields.io/badge/version-1.9.0-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
-[![Tools](https://img.shields.io/badge/tools-35-green.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Version](https://img.shields.io/badge/version-1.9.4-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Tools](https://img.shields.io/badge/tools-37-green.svg)](https://github.com/Jaikumar3/stratos-mcp)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 [![Azure SDK](https://img.shields.io/badge/Azure%20SDK-v4+-yellow.svg)](https://azure.microsoft.com/en-us/downloads/)
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)](https://github.com/Jaikumar3/stratos-mcp)
@@ -20,7 +20,7 @@
 
 ## Overview
 
-**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 35 production-ready tools covering multi-location scanning, enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including service account analysis and secret hunting), and compliance reporting for Azure cloud environments.
+**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 37 production-ready tools covering multi-location scanning, enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including live K8s API scanning, service account analysis and secret hunting), and compliance reporting for Azure cloud environments.
 
 ### Use Cases
 
@@ -35,11 +35,11 @@
 ### Key Highlights
 
 - **100% Read-Only** - Safe for production environments  
-- **35 Security Tools** - Comprehensive Azure service coverage  
+- **37 Security Tools** - Comprehensive Azure service coverage  
 - **Multi-Location** - Scan common (10) or all (45+) Azure regions  
 - **Multi-Format Reports** - PDF, HTML, CSV, Markdown, JSON  
 - **Attack Path Analysis** - Privilege escalation and lateral movement mapping  
-- **AKS/Kubernetes** - 7 specialized container security tools (incl. SA & secret hunting)  
+- **AKS/Kubernetes** - 9 specialized container security tools (incl. live K8s API)  
 - **Enterprise Ready** - Professional reports for executives and auditors
 
 ---
@@ -85,12 +85,16 @@
 <tr>
 <td width="50%">
 
-### ☸️ Kubernetes/AKS (5 Tools)
+### ☸️ Kubernetes/AKS (9 Tools)
 - **Cluster Security** - RBAC, network policies, pod security
 - **Credentials** - Extract kubeconfig for kubectl access
 - **Identity Enumeration** - Cluster and kubelet identities
 - **Node Security** - Disk encryption, SSH, public IPs
 - **IMDS Testing** - Pod escape vulnerability detection
+- **scan_aks_full** - All AKS checks in one comprehensive scan
+- **scan_aks_live** - Direct K8s API scanning (secrets, RBAC, pods)
+- **Service Account Analysis** - Auto-mount, workload identity
+- **Secret Hunting** - K8s secrets, Key Vault, IMDS credentials
 
 </td>
 <td width="50%">
@@ -112,7 +116,7 @@
 
 ---
 
-## 📋 Tool Reference (25 Tools)
+## 📋 Tool Reference (37 Tools)
 
 ### Naming Convention
 | Prefix | Purpose |
