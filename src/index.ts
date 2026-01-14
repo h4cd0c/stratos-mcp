@@ -6134,6 +6134,10 @@ kubectl --token=\\$TOKEN get pods -A
             }
           }
 
+          // Convert kubeconfig from devicecode to azurecli auth
+          // Replace: --login devicecode → --login azurecli
+          kubeconfig = kubeconfig.replace(/--login\s+devicecode/gi, '--login azurecli');
+          
           // Configure K8s client from kubeconfig
           const kc = new k8s.KubeConfig();
           kc.loadFromString(kubeconfig);
