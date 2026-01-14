@@ -6089,7 +6089,7 @@ kubectl --token=\\$TOKEN get pods -A
           output += `**Subscription:** ${subscriptionId}\n`;
           output += `**Target Namespace:** ${namespace || 'All namespaces'}\n`;
           output += `**Scan Time:** ${new Date().toISOString()}\n`;
-          output += `**Scanner:** Stratos MCP v1.9.6 (kubectl CLI with 30s timeout)\n\n`;
+          output += `**Scanner:** Stratos MCP v1.9.7 (Enhanced K8s Pentest Methodology)\n\n`;
           output += `---\n\n`;
 
           // Get cluster credentials
@@ -6611,6 +6611,345 @@ kubectl --token=\\$TOKEN get pods -A
             output += `❌ Failed to analyze ConfigMaps: ${e.message}\n\n`;
           }
 
+          // ========== 9. CLUSTER ROLES ANALYSIS ==========
+          output += `## 👑 Cluster Roles Analysis\n\n`;
+          try {
+            const crJson = await runKubectl('get clusterroles -o json');
+            const crItems = JSON.parse(crJson).items || [];
+            
+            const dangerousRoles: Array<{name: string; verbs: string[]; resources: string[]}> = [];
+            const wildcardRoles: Array<{name: string}> = [];
+            
+            for (const cr of crItems) {
+              const roleName = (cr as any).metadata?.name || 'unknown';
+              const rules = (cr as any).rules || [];
+              
+              for (const rule of rules) {
+                const verbs = rule.verbs || [];
+                const resources = rule.resources || [];
+                const apiGroups = rule.apiGroups || [];
+                
+                // Check for wildcard permissions (*)
+                if (verbs.includes('*') || resources.includes('*')) {
+                  if (!wildcardRoles.find(r => r.name === roleName)) {
+                    wildcardRoles.push({ name: roleName });
+                  }
+                }
+                
+                // Check for dangerous verb combinations
+                const hasDangerousVerbs = ['create', 'update', 'patch', 'delete'].some(v => verbs.includes(v) || verbs.includes('*'));
+                const hasSensitiveResources = ['secrets', 'pods', 'deployments', 'daemonsets', 'roles', 'clusterroles', 'rolebindings', 'clusterrolebindings']
+                  .some(r => resources.includes(r) || resources.includes('*'));
+                
+                if (hasDangerousVerbs && hasSensitiveResources) {
+                  dangerousRoles.push({
+                    name: roleName,
+                    verbs: verbs.slice(0, 3),
+                    resources: resources.slice(0, 3)
+                  });
+                }
+              }
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Total Cluster Roles | ${crItems.length} |\n`;
+            output += `| Wildcard (*) Roles | ${wildcardRoles.length} |\n`;
+            output += `| High-Privilege Roles | ${dangerousRoles.length} |\n\n`;
+            
+            if (wildcardRoles.length > 5) {
+              output += `### 🚨 Roles with Wildcard Permissions\n\n`;
+              for (const r of wildcardRoles.slice(0, 10)) {
+                output += `- \`${r.name}\`\n`;
+              }
+              output += '\n';
+              
+              findings.push({
+                severity: 'HIGH',
+                category: 'RBAC',
+                finding: `${wildcardRoles.length} cluster roles with wildcard (*) permissions`,
+                details: 'Wildcard permissions violate least privilege principle'
+              });
+              highCount++;
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze cluster roles: ${e.message}\n\n`;
+          }
+
+          // ========== 10. POD SECURITY CONTEXTS ==========
+          output += `## 🛡️ Pod Security Contexts\n\n`;
+          try {
+            const podsCmd = namespace
+              ? `get pods -n ${namespace} -o json`
+              : `get pods --all-namespaces -o json`;
+            const podsJson = await runKubectl(podsCmd);
+            const podItems = JSON.parse(podsJson).items || [];
+            
+            const runAsRootPods: Array<{ns: string; name: string}> = [];
+            const noSecurityContextPods: Array<{ns: string; name: string}> = [];
+            const capAddPods: Array<{ns: string; name: string; caps: string[]}> = [];
+            const hostPidPods: Array<{ns: string; name: string}> = [];
+            const hostIpcPods: Array<{ns: string; name: string}> = [];
+            
+            for (const pod of podItems) {
+              const podName = (pod as any).metadata?.name || 'unknown';
+              const podNs = (pod as any).metadata?.namespace || 'unknown';
+              const spec = (pod as any).spec || {};
+              
+              // Host PID namespace
+              if (spec.hostPID) {
+                hostPidPods.push({ ns: podNs, name: podName });
+              }
+              
+              // Host IPC namespace  
+              if (spec.hostIPC) {
+                hostIpcPods.push({ ns: podNs, name: podName });
+              }
+              
+              for (const container of (spec.containers || [])) {
+                const sc = container.securityContext || {};
+                
+                // No security context at all
+                if (!container.securityContext && !spec.securityContext) {
+                  if (!noSecurityContextPods.find(p => p.name === podName && p.ns === podNs)) {
+                    noSecurityContextPods.push({ ns: podNs, name: podName });
+                  }
+                }
+                
+                // Running as root
+                if (sc.runAsUser === 0 || sc.runAsNonRoot === false) {
+                  runAsRootPods.push({ ns: podNs, name: podName });
+                }
+                
+                // Added capabilities (potential privilege escalation)
+                const addedCaps = sc.capabilities?.add || [];
+                if (addedCaps.length > 0) {
+                  capAddPods.push({ ns: podNs, name: podName, caps: addedCaps });
+                }
+              }
+            }
+            
+            output += `| Security Check | Count |\n|----------------|-------|\n`;
+            output += `| Pods without Security Context | ${noSecurityContextPods.length} |\n`;
+            output += `| Pods running as root | ${runAsRootPods.length} |\n`;
+            output += `| Pods with added capabilities | ${capAddPods.length} |\n`;
+            output += `| Pods with hostPID | ${hostPidPods.length} |\n`;
+            output += `| Pods with hostIPC | ${hostIpcPods.length} |\n\n`;
+            
+            if (hostPidPods.length > 0) {
+              output += `### 🚨 Pods with Host PID Namespace (Container Escape Risk)\n\n`;
+              for (const p of hostPidPods.slice(0, 5)) {
+                output += `- \`${p.ns}/${p.name}\`\n`;
+              }
+              output += '\n';
+              
+              findings.push({
+                severity: 'CRITICAL',
+                category: 'Container Escape',
+                finding: `${hostPidPods.length} pods sharing host PID namespace`,
+                details: 'Can see and signal host processes - container escape vector'
+              });
+              criticalCount++;
+            }
+            
+            if (capAddPods.length > 0) {
+              const dangerousCaps = ['SYS_ADMIN', 'SYS_PTRACE', 'NET_ADMIN', 'DAC_OVERRIDE', 'SETUID', 'SETGID'];
+              const criticalCapPods = capAddPods.filter(p => p.caps.some(c => dangerousCaps.includes(c)));
+              
+              if (criticalCapPods.length > 0) {
+                output += `### 🚨 Pods with Dangerous Capabilities\n\n`;
+                output += `| Namespace | Pod | Capabilities |\n|-----------|-----|---------------|\n`;
+                for (const p of criticalCapPods.slice(0, 10)) {
+                  output += `| ${p.ns} | ${p.name} | ${p.caps.join(', ')} |\n`;
+                }
+                output += '\n';
+                
+                findings.push({
+                  severity: 'CRITICAL',
+                  category: 'Capabilities',
+                  finding: `${criticalCapPods.length} pods with dangerous Linux capabilities`,
+                  details: 'SYS_ADMIN/SYS_PTRACE/etc enable container escape'
+                });
+                criticalCount++;
+              }
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze security contexts: ${e.message}\n\n`;
+          }
+
+          // ========== 11. INGRESS ANALYSIS ==========
+          output += `## 🚪 Ingress Controllers\n\n`;
+          try {
+            const ingCmd = namespace
+              ? `get ingress -n ${namespace} -o json`
+              : `get ingress --all-namespaces -o json`;
+            const ingJson = await runKubectl(ingCmd);
+            const ingItems = JSON.parse(ingJson).items || [];
+            
+            const exposedIngresses: Array<{ns: string; name: string; hosts: string[]; tls: boolean}> = [];
+            
+            for (const ing of ingItems) {
+              const ingName = (ing as any).metadata?.name || 'unknown';
+              const ingNs = (ing as any).metadata?.namespace || 'unknown';
+              const rules = (ing as any).spec?.rules || [];
+              const tls = ((ing as any).spec?.tls || []).length > 0;
+              
+              const hosts = rules.map((r: any) => r.host || '*').filter(Boolean);
+              exposedIngresses.push({ ns: ingNs, name: ingName, hosts, tls });
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Total Ingresses | ${ingItems.length} |\n`;
+            output += `| Without TLS | ${exposedIngresses.filter(i => !i.tls).length} |\n\n`;
+            
+            if (exposedIngresses.length > 0) {
+              output += `### 📋 Ingress Resources\n\n`;
+              output += `| Namespace | Ingress | Hosts | TLS |\n|-----------|---------|-------|-----|\n`;
+              for (const ing of exposedIngresses.slice(0, 10)) {
+                output += `| ${ing.ns} | ${ing.name} | ${ing.hosts.join(', ')} | ${ing.tls ? '✅' : '❌'} |\n`;
+              }
+              output += '\n';
+              
+              const noTls = exposedIngresses.filter(i => !i.tls);
+              if (noTls.length > 0) {
+                findings.push({
+                  severity: 'MEDIUM',
+                  category: 'Ingress',
+                  finding: `${noTls.length} ingresses without TLS encryption`,
+                  details: 'Traffic exposed in plain HTTP'
+                });
+                mediumCount++;
+              }
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze ingresses: ${e.message}\n\n`;
+          }
+
+          // ========== 12. DAEMONSETS ANALYSIS ==========
+          output += `## 🔄 DaemonSets (Node-Wide Pods)\n\n`;
+          try {
+            const dsJson = await runKubectl('get daemonsets --all-namespaces -o json');
+            const dsItems = JSON.parse(dsJson).items || [];
+            
+            const privilegedDs: Array<{ns: string; name: string; issues: string[]}> = [];
+            
+            for (const ds of dsItems) {
+              const dsName = (ds as any).metadata?.name || 'unknown';
+              const dsNs = (ds as any).metadata?.namespace || 'unknown';
+              const spec = (ds as any).spec?.template?.spec || {};
+              const issues: string[] = [];
+              
+              if (spec.hostNetwork) issues.push('hostNetwork');
+              if (spec.hostPID) issues.push('hostPID');
+              if (spec.hostIPC) issues.push('hostIPC');
+              
+              for (const container of (spec.containers || [])) {
+                if (container.securityContext?.privileged) {
+                  issues.push('privileged');
+                }
+              }
+              
+              if (issues.length > 0) {
+                privilegedDs.push({ ns: dsNs, name: dsName, issues });
+              }
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Total DaemonSets | ${dsItems.length} |\n`;
+            output += `| Privileged DaemonSets | ${privilegedDs.length} |\n\n`;
+            
+            if (privilegedDs.length > 0) {
+              output += `### ⚠️ DaemonSets with Elevated Privileges\n\n`;
+              output += `| Namespace | DaemonSet | Issues |\n|-----------|-----------|--------|\n`;
+              for (const ds of privilegedDs.slice(0, 10)) {
+                output += `| ${ds.ns} | ${ds.name} | ${ds.issues.join(', ')} |\n`;
+              }
+              output += '\n';
+              
+              // DaemonSets run on all nodes - privileged ones are critical
+              findings.push({
+                severity: 'HIGH',
+                category: 'DaemonSets',
+                finding: `${privilegedDs.length} privileged DaemonSets (runs on ALL nodes)`,
+                details: 'DaemonSets with host access affect entire cluster'
+              });
+              highCount++;
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze DaemonSets: ${e.message}\n\n`;
+          }
+
+          // ========== 13. JWT TOKEN ANALYSIS ==========
+          output += `## 🎫 Service Account Token Analysis\n\n`;
+          try {
+            const tokenSecretsCmd = `get secrets --all-namespaces -o json`;
+            const tokenJson = await runKubectl(tokenSecretsCmd);
+            const allSecrets = JSON.parse(tokenJson).items || [];
+            
+            const saTokens = allSecrets.filter((s: any) => s.type === 'kubernetes.io/service-account-token');
+            const longLivedTokens: Array<{ns: string; name: string; sa: string}> = [];
+            
+            for (const token of saTokens) {
+              const tokenNs = (token as any).metadata?.namespace || 'unknown';
+              const tokenName = (token as any).metadata?.name || 'unknown';
+              const annotations = (token as any).metadata?.annotations || {};
+              const saName = annotations['kubernetes.io/service-account.name'] || 'unknown';
+              
+              // Legacy long-lived tokens (pre-1.24 style)
+              longLivedTokens.push({ ns: tokenNs, name: tokenName, sa: saName });
+            }
+            
+            output += `| Metric | Count |\n|--------|-------|\n`;
+            output += `| Service Account Tokens | ${saTokens.length} |\n`;
+            output += `| Legacy Long-Lived Tokens | ${longLivedTokens.length} |\n\n`;
+            
+            if (longLivedTokens.length > 20) {
+              output += `### ⚠️ Service Account Tokens (Potential Attack Vector)\n\n`;
+              output += `Many long-lived tokens exist. In K8s 1.24+, prefer bound tokens.\n\n`;
+              
+              findings.push({
+                severity: 'MEDIUM',
+                category: 'Tokens',
+                finding: `${longLivedTokens.length} long-lived SA tokens (legacy style)`,
+                details: 'Migrate to short-lived bound tokens (K8s 1.24+)'
+              });
+              mediumCount++;
+            }
+          } catch (e: any) {
+            output += `❌ Failed to analyze tokens: ${e.message}\n\n`;
+          }
+
+          // ========== 14. ATTACK SURFACE SUMMARY ==========
+          output += `## 🎯 Attack Surface Summary\n\n`;
+          output += `Based on [Kubernetes Pentest Methodology](https://exploit-notes.hdks.org/exploit/container/kubernetes/):\n\n`;
+          output += `| Attack Vector | Risk Level | Notes |\n|---------------|------------|-------|\n`;
+          
+          // Summarize attack vectors found
+          const attackVectors: Array<{vector: string; risk: string; notes: string}> = [];
+          
+          if (criticalCount > 0) {
+            attackVectors.push({ vector: 'Container Escape', risk: '🔴 CRITICAL', notes: 'Privileged containers or host namespaces found' });
+          }
+          if (findings.some(f => f.category === 'RBAC')) {
+            attackVectors.push({ vector: 'RBAC Escalation', risk: '🟠 HIGH', notes: 'Overprivileged roles or bindings' });
+          }
+          if (findings.some(f => f.category === 'Secrets')) {
+            attackVectors.push({ vector: 'Secret Theft', risk: '🟠 HIGH', notes: 'Accessible secrets for lateral movement' });
+          }
+          if (findings.some(f => f.category === 'Network')) {
+            attackVectors.push({ vector: 'Lateral Movement', risk: '🔴 CRITICAL', notes: 'No network policies - unrestricted pod-to-pod' });
+          }
+          if (findings.some(f => f.category === 'Services')) {
+            attackVectors.push({ vector: 'External Exposure', risk: '🟠 HIGH', notes: 'Internet-facing services' });
+          }
+          
+          for (const av of attackVectors) {
+            output += `| ${av.vector} | ${av.risk} | ${av.notes} |\n`;
+          }
+          if (attackVectors.length === 0) {
+            output += `| None Critical | 🟢 LOW | Basic hardening in place |\n`;
+          }
+          output += '\n';
+
           // ========== SUMMARY ==========
           output += `---\n\n`;
           output += `## 📊 Live Scan Summary\n\n`;
@@ -6645,7 +6984,7 @@ kubectl --token=\\$TOKEN get pods -A
           output += `**Scan Mode:** kubectl CLI (30s timeout per command)\n\n`;
 
           output += `---\n\n`;
-          output += `*Generated by Stratos MCP v1.9.6 - Live Kubernetes Security Scan*\n`;
+          output += `*Generated by Stratos MCP v1.9.7 - Enhanced K8s Pentest Methodology*\n`;
 
           // Cleanup temp kubeconfig
           try {
