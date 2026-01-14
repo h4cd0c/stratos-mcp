@@ -6089,7 +6089,7 @@ kubectl --token=\\$TOKEN get pods -A
           output += `**Subscription:** ${subscriptionId}\n`;
           output += `**Target Namespace:** ${namespace || 'All namespaces'}\n`;
           output += `**Scan Time:** ${new Date().toISOString()}\n`;
-          output += `**Scanner:** Stratos MCP v1.9.4 (Live K8s API)\n\n`;
+          output += `**Scanner:** Stratos MCP v1.9.5 (Live K8s API + kubectl fallback)\n\n`;
           output += `---\n\n`;
 
           // Get cluster credentials
@@ -6138,6 +6138,27 @@ kubectl --token=\\$TOKEN get pods -A
           // Replace: --login devicecode → --login azurecli
           kubeconfig = kubeconfig.replace(/--login\s+devicecode/gi, '--login azurecli');
           
+          // Save kubeconfig to temp file for kubectl fallback
+          const os = await import('os');
+          const path = await import('path');
+          const fs = await import('fs').then(m => m.promises);
+          const tempKubeconfig = path.join(os.tmpdir(), `stratos-kubeconfig-${Date.now()}.yaml`);
+          await fs.writeFile(tempKubeconfig, kubeconfig);
+          
+          // Helper function to run kubectl command as fallback
+          const runKubectl = async (args: string): Promise<string> => {
+            const { exec } = await import('child_process');
+            return new Promise((resolve, reject) => {
+              exec(`kubectl --kubeconfig="${tempKubeconfig}" ${args}`, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+                if (error) {
+                  reject(new Error(stderr || error.message));
+                } else {
+                  resolve(stdout);
+                }
+              });
+            });
+          };
+          
           // Configure K8s client from kubeconfig
           const kc = new k8s.KubeConfig();
           kc.loadFromString(kubeconfig);
@@ -6145,6 +6166,8 @@ kubectl --token=\\$TOKEN get pods -A
           const coreApi = kc.makeApiClient(k8s.CoreV1Api);
           const rbacApi = kc.makeApiClient(k8s.RbacAuthorizationV1Api);
           const networkingApi = kc.makeApiClient(k8s.NetworkingV1Api);
+          
+          let useKubectlFallback = false;
           
           let criticalCount = 0;
           let highCount = 0;
@@ -6154,23 +6177,52 @@ kubectl --token=\\$TOKEN get pods -A
 
           // ========== 1. ENUMERATE NAMESPACES ==========
           output += `## 📁 Namespaces\n\n`;
+          let nsList: string[] = [];
           try {
             const namespacesResp = await coreApi.listNamespace();
-            const nsList = (namespacesResp.items || []).map((ns: any) => ns.metadata?.name).filter(Boolean);
+            nsList = (namespacesResp.items || []).map((ns: any) => ns.metadata?.name).filter(Boolean);
             output += `Found **${nsList.length}** namespaces:\n`;
             output += `\`${nsList.join(', ')}\`\n\n`;
           } catch (e: any) {
-            output += `❌ Failed to list namespaces: ${e.message}\n\n`;
+            // Fallback to kubectl
+            output += `⚠️ K8s API failed, trying kubectl fallback...\n\n`;
+            useKubectlFallback = true;
+            try {
+              const nsJson = await runKubectl('get namespaces -o json');
+              const nsData = JSON.parse(nsJson);
+              nsList = (nsData.items || []).map((ns: any) => ns.metadata?.name).filter(Boolean);
+              output += `Found **${nsList.length}** namespaces (via kubectl):\n`;
+              output += `\`${nsList.join(', ')}\`\n\n`;
+            } catch (kubectlErr: any) {
+              output += `❌ kubectl fallback also failed: ${kubectlErr.message}\n\n`;
+            }
           }
 
           // ========== 2. ENUMERATE SECRETS ==========
           output += `## 🔐 Secrets Analysis\n\n`;
           try {
-            const secretsResp = namespace 
-              ? await coreApi.listNamespacedSecret({ namespace })
-              : await coreApi.listSecretForAllNamespaces();
+            let allSecrets: any[] = [];
             
-            const allSecrets = secretsResp.items || [];
+            if (!useKubectlFallback) {
+              try {
+                const secretsResp = namespace 
+                  ? await coreApi.listNamespacedSecret({ namespace })
+                  : await coreApi.listSecretForAllNamespaces();
+                allSecrets = secretsResp.items || [];
+              } catch (apiErr: any) {
+                useKubectlFallback = true;
+                throw apiErr;
+              }
+            }
+            
+            if (useKubectlFallback) {
+              const secretsCmd = namespace 
+                ? `get secrets -n ${namespace} -o json`
+                : `get secrets --all-namespaces -o json`;
+              const secretsJson = await runKubectl(secretsCmd);
+              allSecrets = JSON.parse(secretsJson).items || [];
+            }
+            
             const nonSaSecrets = allSecrets.filter((s: any) => s.type !== 'kubernetes.io/service-account-token');
             const sensitiveSecrets: Array<{ns: string; name: string; type: string; keys: string[]}> = [];
             
@@ -6223,11 +6275,27 @@ kubectl --token=\\$TOKEN get pods -A
           // ========== 3. SERVICE ACCOUNTS ==========
           output += `## 👤 Service Accounts\n\n`;
           try {
-            const saResp = namespace
-              ? await coreApi.listNamespacedServiceAccount({ namespace })
-              : await coreApi.listServiceAccountForAllNamespaces();
+            let saList: any[] = [];
             
-            const saList = saResp.items || [];
+            if (!useKubectlFallback) {
+              try {
+                const saResp = namespace
+                  ? await coreApi.listNamespacedServiceAccount({ namespace })
+                  : await coreApi.listServiceAccountForAllNamespaces();
+                saList = saResp.items || [];
+              } catch (apiErr: any) {
+                useKubectlFallback = true;
+              }
+            }
+            
+            if (useKubectlFallback) {
+              const saCmd = namespace 
+                ? `get serviceaccounts -n ${namespace} -o json`
+                : `get serviceaccounts --all-namespaces -o json`;
+              const saJson = await runKubectl(saCmd);
+              saList = JSON.parse(saJson).items || [];
+            }
+            
             const defaultSaAutoMount: Array<{ns: string; name: string}> = [];
             
             for (const sa of saList) {
@@ -6267,11 +6335,36 @@ kubectl --token=\\$TOKEN get pods -A
           // ========== 4. RBAC BINDINGS ==========
           output += `## 🔒 RBAC Analysis\n\n`;
           try {
-            const crbResp = await rbacApi.listClusterRoleBinding();
+            let crbItems: any[] = [];
+            let rbItems: any[] = [];
+            
+            if (!useKubectlFallback) {
+              try {
+                const crbResp = await rbacApi.listClusterRoleBinding();
+                crbItems = crbResp.items || [];
+                const rbResp = namespace
+                  ? await rbacApi.listNamespacedRoleBinding({ namespace })
+                  : await rbacApi.listRoleBindingForAllNamespaces();
+                rbItems = rbResp.items || [];
+              } catch (apiErr: any) {
+                useKubectlFallback = true;
+              }
+            }
+            
+            if (useKubectlFallback) {
+              const crbJson = await runKubectl('get clusterrolebindings -o json');
+              crbItems = JSON.parse(crbJson).items || [];
+              const rbCmd = namespace 
+                ? `get rolebindings -n ${namespace} -o json`
+                : `get rolebindings --all-namespaces -o json`;
+              const rbJson = await runKubectl(rbCmd);
+              rbItems = JSON.parse(rbJson).items || [];
+            }
+            
             const dangerousBindings: Array<{name: string; role: string; subjects: string[]}> = [];
             const dangerousRoles = ['cluster-admin', 'admin', 'edit'];
             
-            for (const crb of (crbResp.items || [])) {
+            for (const crb of crbItems) {
               if (dangerousRoles.includes((crb as any).roleRef?.name)) {
                 const subjects = ((crb as any).subjects || []).map((s: any) => 
                   `${s.kind}:${s.namespace ? s.namespace + '/' : ''}${s.name}`
@@ -6284,13 +6377,9 @@ kubectl --token=\\$TOKEN get pods -A
               }
             }
             
-            const rbResp = namespace
-              ? await rbacApi.listNamespacedRoleBinding({ namespace })
-              : await rbacApi.listRoleBindingForAllNamespaces();
-            
             output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Cluster Role Bindings | ${(crbResp.items || []).length} |\n`;
-            output += `| Role Bindings | ${(rbResp.items || []).length} |\n`;
+            output += `| Cluster Role Bindings | ${crbItems.length} |\n`;
+            output += `| Role Bindings | ${rbItems.length} |\n`;
             output += `| Dangerous Cluster Bindings | ${dangerousBindings.length} |\n\n`;
             
             if (dangerousBindings.length > 0) {
@@ -6319,11 +6408,27 @@ kubectl --token=\\$TOKEN get pods -A
           // ========== 5. PRIVILEGED PODS ==========
           output += `## 🐳 Pod Security Analysis\n\n`;
           try {
-            const podsResp = namespace
-              ? await coreApi.listNamespacedPod({ namespace })
-              : await coreApi.listPodForAllNamespaces();
+            let podItems: any[] = [];
             
-            const podItems = podsResp.items || [];
+            if (!useKubectlFallback) {
+              try {
+                const podsResp = namespace
+                  ? await coreApi.listNamespacedPod({ namespace })
+                  : await coreApi.listPodForAllNamespaces();
+                podItems = podsResp.items || [];
+              } catch (apiErr: any) {
+                useKubectlFallback = true;
+              }
+            }
+            
+            if (useKubectlFallback) {
+              const podsCmd = namespace 
+                ? `get pods -n ${namespace} -o json`
+                : `get pods --all-namespaces -o json`;
+              const podsJson = await runKubectl(podsCmd);
+              podItems = JSON.parse(podsJson).items || [];
+            }
+            
             const privilegedPods: Array<{ns: string; name: string; container: string; issues: string[]}> = [];
             const hostNetworkPods: Array<{ns: string; name: string}> = [];
             const hostPathPods: Array<{ns: string; name: string; paths: string[]}> = [];
@@ -6428,11 +6533,27 @@ kubectl --token=\\$TOKEN get pods -A
           // ========== 6. NETWORK POLICIES ==========
           output += `## 🌐 Network Policies\n\n`;
           try {
-            const npResp = namespace
-              ? await networkingApi.listNamespacedNetworkPolicy({ namespace })
-              : await networkingApi.listNetworkPolicyForAllNamespaces();
+            let npItems: any[] = [];
             
-            const npItems = npResp.items || [];
+            if (!useKubectlFallback) {
+              try {
+                const npResp = namespace
+                  ? await networkingApi.listNamespacedNetworkPolicy({ namespace })
+                  : await networkingApi.listNetworkPolicyForAllNamespaces();
+                npItems = npResp.items || [];
+              } catch (apiErr: any) {
+                useKubectlFallback = true;
+              }
+            }
+            
+            if (useKubectlFallback) {
+              const npCmd = namespace 
+                ? `get networkpolicies -n ${namespace} -o json`
+                : `get networkpolicies --all-namespaces -o json`;
+              const npJson = await runKubectl(npCmd);
+              npItems = JSON.parse(npJson).items || [];
+            }
+            
             const npCount = npItems.length;
             
             output += `| Metric | Count |\n|--------|-------|\n`;
@@ -6463,11 +6584,27 @@ kubectl --token=\\$TOKEN get pods -A
           // ========== 7. EXPOSED SERVICES ==========
           output += `## 🌍 Exposed Services\n\n`;
           try {
-            const svcResp = namespace
-              ? await coreApi.listNamespacedService({ namespace })
-              : await coreApi.listServiceForAllNamespaces();
+            let svcItems: any[] = [];
             
-            const svcItems = svcResp.items || [];
+            if (!useKubectlFallback) {
+              try {
+                const svcResp = namespace
+                  ? await coreApi.listNamespacedService({ namespace })
+                  : await coreApi.listServiceForAllNamespaces();
+                svcItems = svcResp.items || [];
+              } catch (apiErr: any) {
+                useKubectlFallback = true;
+              }
+            }
+            
+            if (useKubectlFallback) {
+              const svcCmd = namespace 
+                ? `get services -n ${namespace} -o json`
+                : `get services --all-namespaces -o json`;
+              const svcJson = await runKubectl(svcCmd);
+              svcItems = JSON.parse(svcJson).items || [];
+            }
+            
             const loadBalancers: Array<{ns: string; name: string; ip: string; ports: string[]}> = [];
             const nodePortServices: Array<{ns: string; name: string; ports: string[]}> = [];
             
@@ -6513,11 +6650,27 @@ kubectl --token=\\$TOKEN get pods -A
           // ========== 8. CONFIGMAPS ==========
           output += `## 📄 ConfigMaps Analysis\n\n`;
           try {
-            const cmResp = namespace
-              ? await coreApi.listNamespacedConfigMap({ namespace })
-              : await coreApi.listConfigMapForAllNamespaces();
+            let cmItems: any[] = [];
             
-            const cmItems = cmResp.items || [];
+            if (!useKubectlFallback) {
+              try {
+                const cmResp = namespace
+                  ? await coreApi.listNamespacedConfigMap({ namespace })
+                  : await coreApi.listConfigMapForAllNamespaces();
+                cmItems = cmResp.items || [];
+              } catch (apiErr: any) {
+                useKubectlFallback = true;
+              }
+            }
+            
+            if (useKubectlFallback) {
+              const cmCmd = namespace 
+                ? `get configmaps -n ${namespace} -o json`
+                : `get configmaps --all-namespaces -o json`;
+              const cmJson = await runKubectl(cmCmd);
+              cmItems = JSON.parse(cmJson).items || [];
+            }
+            
             const sensitiveConfigMaps: Array<{ns: string; name: string; keys: string[]}> = [];
             const secretPatterns = ['password', 'secret', 'key', 'token', 'credential', 'apikey'];
             
@@ -6594,10 +6747,18 @@ kubectl --token=\\$TOKEN get pods -A
           
           output += `### Risk Assessment\n\n`;
           output += `**Risk Score:** ${riskScore}\n`;
-          output += `**Risk Level:** ${riskEmoji} **${riskLevel}**\n\n`;
+          output += `**Risk Level:** ${riskEmoji} **${riskLevel}**\n`;
+          output += `**Scan Mode:** ${useKubectlFallback ? 'kubectl CLI fallback' : 'K8s API client'}\n\n`;
 
           output += `---\n\n`;
-          output += `*Generated by Stratos MCP v1.9.4 - Live Kubernetes API Scan*\n`;
+          output += `*Generated by Stratos MCP v1.9.5 - Live Kubernetes API Scan*\n`;
+
+          // Cleanup temp kubeconfig
+          try {
+            await fs.unlink(tempKubeconfig);
+          } catch (cleanupErr) {
+            // Ignore cleanup errors
+          }
 
           return {
             content: [{ type: 'text', text: output }],
