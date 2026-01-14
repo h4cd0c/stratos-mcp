@@ -5,7 +5,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { DefaultAzureCredential } from "@azure/identity";
+import { AzureCliCredential, DefaultAzureCredential, ChainedTokenCredential } from "@azure/identity";
 import { SubscriptionClient } from "@azure/arm-subscriptions";
 import { ResourceManagementClient } from "@azure/arm-resources";
 import { StorageManagementClient } from "@azure/arm-storage";
@@ -25,8 +25,12 @@ import { createObjectCsvWriter } from "csv-writer";
 import * as fs from "fs";
 import * as path from "path";
 
-// Initialize Azure credential
-const credential = new DefaultAzureCredential();
+// Initialize Azure credential - PRIORITIZE Azure CLI over VS Code extension
+// This fixes the issue where VS Code's internal service principal is used instead of user's az login
+const credential = new ChainedTokenCredential(
+  new AzureCliCredential(),      // Try Azure CLI first (your az login)
+  new DefaultAzureCredential()   // Fallback to other methods
+);
 
 // ========== AZURE LOCATIONS ==========
 // All Azure regions/locations
@@ -5556,48 +5560,42 @@ async function main() {
   console.error("=".repeat(70));
   console.error("\n[OK] Server Status: Running");
   console.error("Transport: stdio");
-  console.error("Version: 1.8.0");
-  console.error("\nAvailable Tools (33):");
-  console.error("\n  Phase 1 - Core Enumeration:");
-  console.error("   1. help                      - Comprehensive usage guide");
-  console.error("   2. enumerate_subscriptions   - List Azure subscriptions");
-  console.error("   3. enumerate_resource_groups - List resource groups");
-  console.error("   4. enumerate_resources       - List resources (with filters)");
-  console.error("   5. get_resource_details      - Detailed resource config");
-  console.error("\n  Phase 1 - Network & Storage Security:");
-  console.error("   6. analyze_storage_security  - Storage misconfiguration scanner");
-  console.error("   7. analyze_nsg_rules         - Network exposure analyzer");
-  console.error("   8. enumerate_public_ips      - Internet attack surface mapping");
-  console.error("   9. enumerate_rbac_assignments - Access control auditing");
-  console.error("\n  Phase 2 - Database, Secrets, Compute, Container:");
-  console.error("   10. scan_sql_databases        - SQL security & TDE encryption");
-  console.error("   11. check_key_vault_security  - Key Vault configuration audit");
-  console.error("   12. analyze_cosmos_db_security- Cosmos DB exposure checker");
-  console.error("   13. analyze_vm_security       - VM disk encryption & agents");
-  console.error("   14. scan_aks_clusters         - AKS RBAC & network policies");
-  console.error("   15. check_container_registries- ACR admin user & access");
-  console.error("   16. enumerate_service_principals - Service principal audit");
-  console.error("   17. enumerate_managed_identities - Managed identity mapping");
-  console.error("   18. scan_storage_containers   - Deep blob/container scanner");
-  console.error("\n  Phase 3 - Advanced Analysis:");
-  console.error("   19. generate_security_report  - Comprehensive report generator");
-  console.error("   20. analyze_attack_paths      - Exploitation chain mapping");
-  console.error("\n  Phase 4 - AKS Offensive Security:");
-  console.error("   21. get_aks_credentials       - Extract kubeconfig & admin access");
-  console.error("   22. enumerate_aks_identities  - Map managed identities & RBAC");
-  console.error("   23. scan_aks_node_security    - Node encryption & SSH analysis");
-  console.error("   24. test_aks_imds_access      - IMDS exploitation testing");
-  console.error("\n  Phase 5 - DevOps & Export Formats:");
-  console.error("   25. scan_azure_devops         - Azure DevOps security scanner");
+  console.error("Version: 1.9.1");
+  console.error("\nAvailable Tools (36):");
+  console.error("\n  Multi-Location Scanning (NEW!):");
+  console.error("   1. list_active_locations     - Discover active Azure regions");
+  console.error("   2. scan_all_locations        - Scan resources across regions");
+  console.error("\n  Core Enumeration:");
+  console.error("   3. enumerate_subscriptions   - List Azure subscriptions");
+  console.error("   4. enumerate_resource_groups - List resource groups (+ location filter)");
+  console.error("   5. enumerate_resources       - List resources (+ location filter)");
+  console.error("   6. get_resource_details      - Detailed resource config");
+  console.error("\n  Network & Storage Security:");
+  console.error("   7. analyze_storage_security  - Storage misconfiguration scanner");
+  console.error("   8. analyze_nsg_rules         - Network exposure analyzer");
+  console.error("   9. enumerate_public_ips      - Internet attack surface mapping");
+  console.error("   10. enumerate_rbac_assignments - Access control auditing");
+  console.error("\n  Database, Secrets, Compute:");
+  console.error("   11. scan_sql_databases       - SQL security & TDE encryption");
+  console.error("   12. analyze_key_vault_security - Key Vault configuration audit");
+  console.error("   13. analyze_cosmos_db_security - Cosmos DB exposure checker");
+  console.error("   14. analyze_vm_security      - VM disk encryption & agents");
+  console.error("\n  AKS/Kubernetes Security (8 tools):");
+  console.error("   15. scan_aks_full            - 🚀 FULL AKS SCAN (all 7 checks in one!)");
+  console.error("   16. scan_aks_clusters        - AKS RBAC & network policies");
+  console.error("   17. get_aks_credentials      - Extract kubeconfig & admin access");
+  console.error("   18. enumerate_aks_identities - Map managed identities & RBAC");
+  console.error("   19. scan_aks_node_security   - Node encryption & SSH analysis");
+  console.error("   20. test_aks_imds_access     - IMDS exploitation testing");
+  console.error("   21. scan_aks_service_accounts - Service account security");
+  console.error("   22. hunt_aks_secrets         - Secret hunting guide");
+  console.error("\n  DevOps & Reporting:");
+  console.error("   23. scan_azure_devops        - Azure DevOps security scanner");
+  console.error("   24. generate_security_report - PDF/HTML/CSV report export");
   console.error("\n[TIP] Quick Start:");
-  console.error("   #mcp_stratos_generate_security_report subscriptionId: SUB format: pdf outputFile: report.pdf");
-  console.error("   #mcp_stratos_generate_security_report subscriptionId: SUB format: html outputFile: report.html");
-  console.error("   #mcp_stratos_scan_azure_devops organizationUrl: https://dev.azure.com/yourorg personalAccessToken: PAT");
-  console.error("\nDocumentation:");
-  console.error("   - QUICK_REFERENCE.md - Copy/paste commands");
-  console.error("   - HACKTRICKS_TEST_CASES.md - Professional test scenarios");
+  console.error("   scan_aks_full subscriptionId='SUB' resourceGroup='RG' clusterName='CLUSTER'");
+  console.error("   list_active_locations subscriptionId='SUB' scanMode='all'");
   console.error("\nAuthentication: Using Azure CLI credentials (az login)");
-  console.error("Focus: 33 vulnerability checks | DevOps scanning | PDF/HTML/CSV export");
   console.error("=".repeat(70) + "\n");
 }
 
