@@ -141,26 +141,34 @@
 | 7 | `enumerate_public_ips` | Enumeration | Map internet-exposed attack surface |
 | 8 | `enumerate_rbac_assignments` | Enumeration | Audit access control and permissions |
 | 9 | `enumerate_managed_identities` | Enumeration | Track passwordless authentication |
-| 10 | `analyze_storage_security` | Security | Scan storage accounts for misconfigurations |
-| 11 | `scan_storage_containers` | Security | Deep scan for sensitive files in blobs |
-| 12 | `analyze_nsg_rules` | Security | Identify risky firewall rules |
-| 13 | `scan_sql_databases` | Security | Check SQL security (TDE, firewall, auth) |
-| 14 | `analyze_key_vault_security` | Security | Audit Key Vault configuration |
-| 15 | `analyze_vm_security` | Security | Check VM disk encryption and patches |
-| 16 | `analyze_cosmos_db_security` | Security | Scan Cosmos DB security settings |
-| 17 | `scan_container_registries` | Security | Audit ACR security (admin user, scanning) |
-| 18 | `scan_service_principals` | Security | Find application identities and risks |
-| 19 | `scan_credential_exposure` | Security | Detect exposed credentials |
-| 20 | `generate_security_report` | Reporting | Professional reports (PDF/HTML/CSV/JSON) |
-| 21 | `analyze_attack_paths` | Analysis | Map privilege escalation chains |
-| 22 | `scan_aks_clusters` | Kubernetes | AKS security assessment |
-| 23 | `get_aks_credentials` | Kubernetes | Extract kubeconfig credentials |
-| 24 | `enumerate_aks_identities` | Kubernetes | Map cluster identities and roles |
-| 25 | `scan_aks_node_security` | Kubernetes | Check node security configuration |
-| 26 | `test_aks_imds_access` | Kubernetes | Test for pod escape vulnerabilities |
-| 27 | `scan_aks_service_accounts` | Kubernetes | Analyze AKS service account security |
-| 28 | `hunt_aks_secrets` | Kubernetes | Comprehensive K8s secret hunting guide |
-| 29 | `scan_azure_devops` | DevOps | Detect hardcoded secrets in repos/pipelines |
+| 10 | `list_active_locations` | Multi-Location | Discover which Azure regions have resources |
+| 11 | `scan_all_locations` | Multi-Location | Scan resources across all 45+ Azure regions |
+| 12 | `analyze_storage_security` | Security | Scan storage accounts for misconfigurations |
+| 13 | `scan_storage_containers` | Security | Deep scan for sensitive files in blobs |
+| 14 | `analyze_nsg_rules` | Security | Identify risky firewall rules |
+| 15 | `scan_sql_databases` | Security | Check SQL security (TDE, firewall, auth) |
+| 16 | `analyze_key_vault_security` | Security | Audit Key Vault configuration |
+| 17 | `analyze_vm_security` | Security | Check VM disk encryption and patches |
+| 18 | `analyze_cosmos_db_security` | Security | Scan Cosmos DB security settings |
+| 19 | `scan_container_registries` | Security | Audit ACR security (admin user, scanning) |
+| 20 | `scan_service_principals` | Security | Find application identities and risks |
+| 21 | `scan_credential_exposure` | Security | Detect exposed credentials |
+| 22 | `generate_security_report` | Reporting | Professional reports (PDF/HTML/CSV/JSON) |
+| 23 | `analyze_attack_paths` | Analysis | Map privilege escalation chains |
+| 24 | `enumerate_aks_clusters` | Kubernetes | List all AKS clusters in subscription |
+| 25 | `analyze_aks_security` | Kubernetes | Deep AKS security configuration analysis |
+| 26 | `scan_aks_rbac` | Kubernetes | Analyze AKS RBAC and Azure AD integration |
+| 27 | `scan_aks_network` | Kubernetes | AKS network policies and CNI security |
+| 28 | `scan_aks_secrets` | Kubernetes | AKS secrets management (Key Vault, CSI) |
+| 29 | `get_aks_credentials` | Kubernetes | Extract kubeconfig credentials |
+| 30 | `enumerate_aks_identities` | Kubernetes | Map cluster identities and roles |
+| 31 | `scan_aks_node_security` | Kubernetes | Check node security configuration |
+| 32 | `test_aks_imds_access` | Kubernetes | Test for pod escape vulnerabilities |
+| 33 | `scan_aks_service_accounts` | Kubernetes | Analyze AKS service account security |
+| 34 | `hunt_aks_secrets` | Kubernetes | Comprehensive K8s secret hunting guide |
+| 35 | `scan_aks_full` | Kubernetes | All AKS checks in one comprehensive scan |
+| 36 | `scan_aks_live` | Kubernetes | Direct K8s API scanning (secrets, RBAC, pods) |
+| 37 | `scan_azure_devops` | DevOps | Detect hardcoded secrets in repos/pipelines |
 
 ---
 
