@@ -5,11 +5,99 @@ All notable changes to Stratos (Azure Security Assessment MCP Server) will be do
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.2] - 2026-01-15
+
+### Added
+
+#### Enhanced `scan_aks_imds` with 3 New Capabilities
+
+**1. Cluster-Wide IMDS Exposure Scan** (`scanAllPods: true`)
+- Scans ALL running pods across ALL namespaces for IMDS accessibility
+- Creates exposure heatmap showing which pods can reach IMDS
+- Per-namespace vulnerability summary
+- Auto-generates NetworkPolicy remediation for each affected namespace
+- Scans up to 50 pods with timeout protection
+
+| Feature | Description |
+|---------|-------------|
+| Pod Iteration | Tests each pod individually for IMDS access |
+| Namespace Stats | Shows exposed vs blocked count per namespace |
+| Exposure % | Calculates cluster-wide IMDS exposure percentage |
+| Auto-Remediation | Generates deny-imds NetworkPolicy per namespace |
+
+**2. Token Export for Offline Exploitation** (`exportTokens: true`)
+- Exports all stolen tokens to JSON file in temp directory
+- Includes ready-to-use `curl` commands for each token type
+- ARM, KeyVault, Storage, Graph API exploitation commands
+- `az CLI` integration commands for token injection
+
+| Token Type | Exploitation Commands |
+|------------|----------------------|
+| ARM | List subscriptions, resource groups, resources |
+| Key Vault | List/read secrets, enumerate keys |
+| Storage | List containers, download blobs |
+| Graph API | Enumerate users, groups, applications |
+
+**3. Deep Data Plane Reading** (`deepDataPlane: true`)
+- Actually READS secret VALUES from Key Vault (not just enumeration)
+- Downloads and previews blob CONTENTS from Storage
+- Identifies sensitive files: `.env`, `.pem`, `.key`, connection strings
+- Content type detection: certificates, tokens, GUIDs, API keys
+- Truncated display with full extraction to temp file
+
+| Data Plane | Deep Read Capability |
+|------------|---------------------|
+| Key Vault | Extract actual secret values with type detection |
+| Storage | List blob contents, read sensitive text files |
+| ACR | Already supports catalog + repository enumeration |
+
+**New Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `scanAllPods` | boolean | false | Scan all pods cluster-wide for IMDS exposure |
+| `exportTokens` | boolean | false | Export tokens to file with curl commands |
+| `deepDataPlane` | boolean | false | Read actual secret values and blob contents |
+
+### Changed
+- Version: 1.10.2
+- Enhanced Phase 9 (Data Plane) with deep reading capabilities
+- Added cluster-wide scan as Phase 0.5 (before target pod selection)
+- Token export added after Phase 4 (Token Theft)
+
+### Security Notes
+- `deepDataPlane` may expose actual secrets in output - use with caution
+- Token export file contains valid credentials - secure appropriately
+- Cluster-wide scan limited to 50 pods for performance
+
+---
+
+## [1.10.1] - 2026-01-14
+
+### Changed
+
+#### Professional Tool Naming Convention
+Renamed tools for consistency and professionalism:
+
+| Old Name | New Name |
+|----------|----------|
+| `test_aks_imds_full_recon` | `scan_aks_imds` |
+| `hunt_aks_secrets` | `scan_aks_secrets` |
+| `analyze_key_vault_security` | `analyze_keyvault_security` |
+| `analyze_cosmos_db_security` | `analyze_cosmosdb_security` |
+| `scan_container_registries` | `scan_acr_security` |
+| `analyze_rbac_privilege_escalation` | `analyze_rbac_privesc` |
+
+### Removed
+- `test_aks_imds_access` (duplicate functionality, merged into `scan_aks_imds`)
+
+---
+
 ## [1.10.0] - 2026-01-14
 
 ### Added
 
-#### NEW TOOL: `test_aks_imds_full_recon`
+#### NEW TOOL: `scan_aks_imds`
 Complete IMDS exploitation and full Azure reconnaissance from Kubernetes pods.
 
 **Attack Chain:** `Pod → IMDS (169.254.169.254) → Managed Identity Token → Azure Resources`
