@@ -7316,10 +7316,15 @@ kubectl --token=\\$TOKEN get pods -A
             const namespaceStats: Record<string, { total: number; exposed: number; blocked: number }> = {};
             
             try {
-              const allPodsJson = await runKubectl(`get pods --all-namespaces -o json`);
+              // Respect namespace parameter if provided
+              const nsArg = namespace ? `-n ${namespace}` : '--all-namespaces';
+              const scopeLabel = namespace ? `namespace "${namespace}"` : 'ALL namespaces';
+              
+              const allPodsJson = await runKubectl(`get pods ${nsArg} -o json`);
               const allPodsData = JSON.parse(allPodsJson);
               const runningPods = (allPodsData.items || []).filter((p: any) => p.status?.phase === 'Running');
               
+              output += `**Scope:** ${scopeLabel}\n`;
               output += `Found **${runningPods.length}** running pods to scan\n\n`;
               output += `| Namespace | Pod | Container | IMDS Status |\n|-----------|-----|-----------|-------------|\n`;
               
