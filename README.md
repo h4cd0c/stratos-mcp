@@ -2,8 +2,8 @@
 
 # Stratos - Azure Security Assessment MCP Server
 
-[![Version](https://img.shields.io/badge/version-1.10.2-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
-[![Tools](https://img.shields.io/badge/tools-37-green.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Version](https://img.shields.io/badge/version-1.10.3-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Tools](https://img.shields.io/badge/tools-32-green.svg)](https://github.com/Jaikumar3/stratos-mcp)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 [![Azure SDK](https://img.shields.io/badge/Azure%20SDK-v4+-yellow.svg)](https://azure.microsoft.com/en-us/downloads/)
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)](https://github.com/Jaikumar3/stratos-mcp)
@@ -20,7 +20,7 @@
 
 ## Overview
 
-**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 37 production-ready tools covering multi-location scanning, enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including live K8s API scanning, IMDS exploitation, service account analysis and secret hunting), and compliance reporting for Azure cloud environments.
+**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 32 production-ready tools covering multi-location scanning, enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including live K8s API scanning and IMDS exploitation), and compliance reporting for Azure cloud environments.
 
 ### Use Cases
 
@@ -36,11 +36,11 @@
 ### Key Highlights
 
 - **100% Read-Only** - Safe for production environments  
-- **37 Security Tools** - Comprehensive Azure service coverage  
+- **32 Security Tools** - Comprehensive Azure service coverage  
 - **Multi-Location** - Scan common (10) or all (45+) Azure regions  
 - **Multi-Format Reports** - PDF, HTML, CSV, Markdown, JSON  
 - **Attack Path Analysis** - Privilege escalation and lateral movement mapping  
-- **AKS/Kubernetes** - 9 specialized container security tools (incl. live K8s API)  
+- **AKS/Kubernetes** - 4 consolidated container security tools (ARM + Live K8s + IMDS)  
 - **Enterprise Ready** - Professional reports for executives and auditors
 
 ---
@@ -86,16 +86,11 @@
 <tr>
 <td width="50%">
 
-### ☸️ Kubernetes/AKS (9 Tools)
-- **Cluster Security** - RBAC, network policies, pod security
-- **Credentials** - Extract kubeconfig for kubectl access
-- **Identity Enumeration** - Cluster and kubelet identities
-- **Node Security** - Disk encryption, SSH, public IPs
-- **IMDS Testing** - Pod escape vulnerability detection
-- **scan_aks_full** - All AKS checks in one comprehensive scan
-- **scan_aks_live** - Direct K8s API scanning (secrets, RBAC, pods)
-- **Service Account Analysis** - Auto-mount, workload identity
-- **Secret Hunting** - K8s secrets, Key Vault, IMDS credentials
+### ☸️ Kubernetes/AKS (4 Tools)
+- **scan_aks_full** - Comprehensive ARM-based assessment (30+ CIS checks)
+- **scan_aks_live** - Live K8s API scanning (secrets, RBAC, pods, SAs)
+- **scan_aks_imds** - IMDS exploitation & token theft (cluster-wide scan, token export, deep data plane)
+- **get_aks_credentials** - Extract kubeconfig for kubectl access
 
 </td>
 <td width="50%">
@@ -156,20 +151,15 @@
 | 21 | `scan_credential_exposure` | Security | Detect exposed credentials |
 | 22 | `generate_security_report` | Reporting | Professional reports (PDF/HTML/CSV/JSON) |
 | 23 | `analyze_attack_paths` | Analysis | Map privilege escalation chains |
-| 24 | `enumerate_aks_clusters` | Kubernetes | List all AKS clusters in subscription |
-| 25 | `analyze_aks_security` | Kubernetes | Deep AKS security configuration analysis |
-| 26 | `scan_aks_rbac` | Kubernetes | Analyze AKS RBAC and Azure AD integration |
-| 27 | `scan_aks_network` | Kubernetes | AKS network policies and CNI security |
-| 28 | `scan_aks_secrets` | Kubernetes | AKS secrets management (Key Vault, CSI) |
-| 29 | `get_aks_credentials` | Kubernetes | Extract kubeconfig credentials |
-| 30 | `enumerate_aks_identities` | Kubernetes | Map cluster identities and roles |
-| 31 | `scan_aks_node_security` | Kubernetes | Check node security configuration |
-| 32 | `scan_aks_imds` | Kubernetes | IMDS exploitation & full recon |
-| 33 | `scan_aks_service_accounts` | Kubernetes | Analyze AKS service account security |
-| 34 | `scan_aks_secrets` | Kubernetes | Comprehensive K8s secret enumeration |
-| 35 | `scan_aks_full` | Kubernetes | All AKS checks in one comprehensive scan |
-| 36 | `scan_aks_live` | Kubernetes | Direct K8s API scanning (secrets, RBAC, pods) |
-| 37 | `scan_azure_devops` | DevOps | Detect hardcoded secrets in repos/pipelines |
+| 24 | `get_aks_credentials` | Kubernetes | Extract kubeconfig credentials |
+| 25 | `scan_aks_full` | Kubernetes | Comprehensive ARM-based AKS assessment (30+ CIS checks) |
+| 26 | `scan_aks_live` | Kubernetes | Direct K8s API scanning (secrets, RBAC, pods, SAs) |
+| 27 | `scan_aks_imds` | Kubernetes | IMDS exploitation & token theft (cluster-wide, export, deep read) |
+| 28 | `scan_azure_devops` | DevOps | Detect hardcoded secrets in repos/pipelines |
+| 29 | `analyze_function_apps` | Compute | Function App security analysis |
+| 30 | `analyze_app_service_security` | Compute | App Service security assessment |
+| 31 | `analyze_firewall_policies` | Network | Azure Firewall policy analysis |
+| 32 | `analyze_logic_apps` | Integration | Logic Apps workflow security |
 
 ---
 
@@ -224,8 +214,11 @@ scan_azure_devops organizationUrl="https://dev.azure.com/yourorg" personalAccess
 
 ### 4. AKS Security Assessment
 ```bash
-scan_aks_clusters subscriptionId="YOUR_SUB_ID"
-test_aks_imds_access subscriptionId="YOUR_SUB_ID" resourceGroup="RG-NAME" clusterName="CLUSTER-NAME"
+# Comprehensive ARM-based scan
+scan_aks_full subscriptionId="YOUR_SUB_ID" resourceGroup="RG-NAME" clusterName="CLUSTER-NAME"
+
+# IMDS exploitation with token export
+scan_aks_imds subscriptionId="YOUR_SUB_ID" resourceGroup="RG-NAME" clusterName="CLUSTER-NAME" scanAllPods=true exportTokens=true deepDataPlane=true
 ```
 
 ### 5. Deep Storage Container Scan

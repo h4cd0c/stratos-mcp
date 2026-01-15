@@ -5,6 +5,32 @@ All notable changes to Stratos (Azure Security Assessment MCP Server) will be do
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.3] - 2026-01-15
+
+### Changed
+
+#### AKS Tool Consolidation (37 → 32 Tools)
+Reduced redundant AKS tools from 9 to 4 essential tools for cleaner architecture:
+
+**Removed (5 tools):**
+| Tool | Reason |
+|------|--------|
+| `scan_aks_clusters` | Covered by `scan_aks_full` with better CIS mapping |
+| `enumerate_aks_identities` | Covered by `scan_aks_full` identity enumeration section |
+| `scan_aks_node_security` | Covered by `scan_aks_full` node pool analysis |
+| `scan_aks_service_accounts` | Covered by `scan_aks_live` SA analysis |
+| `scan_aks_secrets` | Covered by `scan_aks_live` secret hunting section |
+
+**Kept (4 essential AKS tools):**
+| Tool | Purpose |
+|------|---------|
+| `scan_aks_full` | Comprehensive ARM-based assessment (30+ CIS checks) |
+| `scan_aks_live` | Live K8s API security scanning (kubectl required) |
+| `scan_aks_imds` | Offensive IMDS exploitation & token theft |
+| `get_aks_credentials` | Kubeconfig extraction utility |
+
+---
+
 ## [1.10.2] - 2026-01-15
 
 ### Added
