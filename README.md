@@ -2,13 +2,13 @@
 
 # Stratos - Azure Security Assessment MCP Server
 
-[![Version](https://img.shields.io/badge/version-1.10.1-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Version](https://img.shields.io/badge/version-1.10.2-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
 [![Tools](https://img.shields.io/badge/tools-37-green.svg)](https://github.com/Jaikumar3/stratos-mcp)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 [![Azure SDK](https://img.shields.io/badge/Azure%20SDK-v4+-yellow.svg)](https://azure.microsoft.com/en-us/downloads/)
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)](https://github.com/Jaikumar3/stratos-mcp)
 
-**Enterprise-grade Azure security assessment toolkit with multi-location scanning, attack path analysis, and compliance reporting**
+**Enterprise-grade Azure security assessment toolkit with multi-location scanning, IMDS exploitation, attack path analysis, and compliance reporting**
 
 *Designed for security professionals conducting authorized penetration tests, compliance audits, and executive risk reporting*
 
@@ -20,12 +20,13 @@
 
 ## Overview
 
-**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 37 production-ready tools covering multi-location scanning, enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including live K8s API scanning, service account analysis and secret hunting), and compliance reporting for Azure cloud environments.
+**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 37 production-ready tools covering multi-location scanning, enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including live K8s API scanning, IMDS exploitation, service account analysis and secret hunting), and compliance reporting for Azure cloud environments.
 
 ### Use Cases
 
 - **Multi-Location Scanning** - Scan resources across all 45+ Azure regions
 - **Security Assessments** - Identify misconfigurations and vulnerabilities
+- **IMDS Exploitation** - Token theft, cluster-wide exposure, deep data plane access
 - **Executive Reporting** - Generate professional risk assessment reports
 - **Compliance Audits** - Map findings to CIS, NIST frameworks
 - **Penetration Testing** - Discover attack paths and privilege escalation vectors
