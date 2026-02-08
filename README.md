@@ -278,7 +278,7 @@ MIT
 
 ## 🤝 Author
 
-**Jaikumar3** - [GitHub](https://github.com/Jaikumar3)
+**h4cd0c** - [GitHub](https://github.com/Jaikumar3)
 
 ---
 
