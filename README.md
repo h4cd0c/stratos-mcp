@@ -2,7 +2,8 @@
 
 # Stratos - Azure Security Assessment MCP Server
 
-[![Version](https://img.shields.io/badge/version-1.10.3-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Version](https://img.shields.io/badge/version-1.10.4-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Tests](https://img.shields.io/badge/tests-65%20passing-brightgreen.svg)](https://jestjs.io/)
 [![Tools](https://img.shields.io/badge/tools-32-green.svg)](https://github.com/Jaikumar3/stratos-mcp)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 [![Azure SDK](https://img.shields.io/badge/Azure%20SDK-v4+-yellow.svg)](https://azure.microsoft.com/en-us/downloads/)
@@ -112,7 +113,7 @@
 
 ---
 
-## 📋 Tool Reference (37 Tools)
+## 📋 Tool Reference (32 Tools)
 
 ### Naming Convention
 | Prefix | Purpose |

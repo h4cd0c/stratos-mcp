@@ -5,6 +5,64 @@ All notable changes to Stratos (Azure Security Assessment MCP Server) will be do
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.4] - 2026-02-08
+
+### Added
+
+#### Tool Annotations (MCP Compliance)
+- **Added annotations to 31 out of 32 tools** (97% coverage)
+  - `readOnly: true` - All tools are read-only security assessments
+  - `destructive: false` - No tools modify or delete Azure resources
+  - `idempotent: false` - Cloud state can change between calls
+  - `openWorld: true` - Results depend on current Azure configuration
+  - Special case: `help` tool has `idempotent: true, openWorld: false`
+- Improved MCP specification compliance
+- Better client-side tool handling and discoverability
+
+#### Test Suite (Quality Assurance)
+- **Created comprehensive test suite with 145+ test cases**
+- `tests/utils.test.ts` (65 tests)
+  - Location resolution and filtering
+  - Azure resource validation
+  - Tool annotation verification
+  - Integration workflows
+- `tests/tools.test.ts` (45 tests)
+  - Tool structure validation
+  - Naming conventions
+  - Input schema validation
+  - Tool grouping and categorization
+- `tests/security.test.ts` (35 tests)
+  - OWASP MCP compliance verification (MCP01, MCP02, MCP03, MCP05, MCP08)
+  - Read-only operations validation
+  - Credential handling security
+  - Input validation patterns
+  - Error handling and data protection
+- `tests/README.md` - Comprehensive test documentation
+  - Running tests guide
+  - Coverage goals and metrics
+  - Best practices and troubleshooting
+
+### Changed
+
+#### Documentation Improvements
+- **Replaced hardcoded test data with clear example values**
+  - Changed subscription IDs: `1f0c8a8b-*` → `00000000-0000-0000-0000-000000000000`
+  - Updated resource names to generic examples
+  - Removed real-looking identifiers from help text
+  - Enhanced documentation clarity
+
+### Security
+- ✅ No hardcoded credentials or real-looking IDs
+- ✅ All security properties validated with tests
+- ✅ OWASP MCP compliance verified
+- ✅ Input validation patterns tested
+
+### Quality
+- ✅ 145+ test cases created
+- ✅ Tool annotations added for better UX
+- ✅ Documentation enhanced with clear examples
+- ✅ Foundation for CI/CD pipeline
+
 ## [1.10.3] - 2026-01-15
 
 ### Changed

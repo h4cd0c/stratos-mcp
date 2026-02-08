@@ -95,6 +95,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {},
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: true,
+          openWorld: false
+        }
       },
       {
         name: "list_active_locations",
@@ -114,6 +120,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "scan_all_locations",
@@ -137,10 +149,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId", "resourceType"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "enumerate_subscriptions",
         description: "Enumerate all Azure subscriptions accessible with current credentials. Returns subscription ID, name, state, and tenant ID.",
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        },
         inputSchema: {
           type: "object",
           properties: {},
@@ -163,6 +187,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "enumerate_resources",
@@ -189,6 +219,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "get_resource_details",
@@ -219,6 +255,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId", "resourceGroup", "resourceProvider", "resourceType", "resourceName"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "analyze_storage_security",
@@ -237,6 +279,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "analyze_nsg_rules",
@@ -259,6 +307,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "enumerate_public_ips",
@@ -277,6 +331,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "enumerate_rbac_assignments",
@@ -295,6 +355,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "scan_sql_databases",
@@ -313,6 +379,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "analyze_keyvault_security",
@@ -331,6 +403,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "analyze_cosmosdb_security",
@@ -349,6 +427,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "analyze_vm_security",
@@ -367,6 +451,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "scan_acr_security",
@@ -385,6 +475,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "enumerate_service_principals",
@@ -399,6 +495,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "enumerate_managed_identities",
@@ -417,6 +519,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "scan_storage_containers",
@@ -443,6 +551,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "generate_security_report",
@@ -482,6 +596,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "analyze_attack_paths",
@@ -505,6 +625,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "get_aks_credentials",
@@ -531,6 +657,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId", "resourceGroup", "clusterName"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "scan_azure_devops",
@@ -557,6 +689,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["organizationUrl", "personalAccessToken"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       // ========== NEW SECURITY TOOLS ==========
       {
@@ -576,6 +714,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "analyze_app_service_security",
@@ -594,6 +738,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "analyze_firewall_policies",
@@ -612,6 +762,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "analyze_logic_apps",
@@ -630,6 +786,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "analyze_rbac_privesc",
@@ -648,6 +810,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "detect_persistence_mechanisms",
@@ -662,6 +830,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "scan_aks_full",
@@ -684,6 +858,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId", "resourceGroup", "clusterName"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "scan_aks_live",
@@ -710,6 +890,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId", "resourceGroup", "clusterName"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
       {
         name: "scan_aks_imds",
@@ -760,6 +946,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["subscriptionId", "resourceGroup", "clusterName"],
         },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
     ],
   };
@@ -904,7 +1096,7 @@ enumerate_resources subscriptionId="YOUR_SUB" location="eastus,westeurope"
   - resourceName (required): Resource name
 **Example:**
   subscriptionId: "00000000-0000-0000-0000-000000000000"
-  resourceGroup: "RG-TMS-STORAGE-NCU-I"
+  resourceGroup: "my-resource-group"
   resourceProvider: "Microsoft.Storage"
   resourceType: "storageAccounts"
   resourceName: "mystorageaccount"
