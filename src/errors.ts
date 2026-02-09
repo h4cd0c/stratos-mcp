@@ -1,6 +1,6 @@
 /**
  * Stratos Azure MCP - Structured Error Handling
- * Version 1.10.6
+ * See package.json for version
  * 
  * Provides comprehensive error handling with:
  * - Error categorization
@@ -320,7 +320,6 @@ export function normalizeError(error: unknown): MCPError {
   }
 
   if (error instanceof Error) {
-    // Check for Azure SDK errors
     if ('statusCode' in error || 'code' in error) {
       const azureError = error as any;
       return new AzureAPIError(
@@ -334,12 +333,10 @@ export function normalizeError(error: unknown): MCPError {
       );
     }
 
-    // Check for timeout errors
     if (error.message.includes('timeout') || error.message.includes('ETIMEDOUT')) {
       return new TimeoutError('Operation', 30000, { originalMessage: error.message });
     }
 
-    // Check for network errors
     if (
       error.message.includes('ECONNREFUSED') ||
       error.message.includes('ENOTFOUND') ||

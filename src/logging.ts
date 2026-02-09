@@ -1,6 +1,6 @@
 /**
  * Nimbus Azure MCP - Logging and Performance Tracking
- * Version 1.10.6
+ * See package.json for version
  * 
  * Provides:
  * - Structured logging with levels

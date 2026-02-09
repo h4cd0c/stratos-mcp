@@ -1,6 +1,6 @@
 /**
  * Nimbus Azure MCP - Retry Logic for Transient Failures
- * Version 1.10.6
+ * See package.json for version
  * 
  * Provides exponential backoff retry for:
  * - Rate limiting
@@ -51,7 +51,6 @@ function isRetryableError(error: unknown, retryableErrors: string[]): boolean {
   }
 
   if (error instanceof Error) {
-    // Check error name/message against retryable patterns
     const errorStr = `${error.name}:${error.message}`;
     return retryableErrors.some(pattern => 
       errorStr.includes(pattern) || error.name === pattern
@@ -103,7 +102,6 @@ export async function retry<T>(
     } catch (error) {
       lastError = error;
 
-      // Check if error is retryable
       if (!isRetryableError(error, opts.retryableErrors)) {
         logger.debug(`${operationName}: Non-retryable error, throwing immediately`, {
           error: error instanceof Error ? error.message : String(error),
@@ -291,7 +289,6 @@ export class CircuitBreaker {
    * Execute function with circuit breaker
    */
   async execute<T>(fn: () => Promise<T>, operationName: string = 'operation'): Promise<T> {
-    // Check if circuit should transition to HALF_OPEN
     if (this.state === 'OPEN') {
       const timeSinceLastFailure = Date.now() - this.lastFailureTime;
       if (timeSinceLastFailure >= this.resetTimeoutMs) {
