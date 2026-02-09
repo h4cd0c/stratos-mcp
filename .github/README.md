@@ -23,8 +23,8 @@ This repository uses GitHub Actions for automated testing and releases.
 **What it does:**
 - Runs full test suite
 - Compiles TypeScript
-- Publishes package to npm (when NPM_TOKEN is configured)
 - Creates GitHub release with changelog
+- ~~Publishes to npm~~ (disabled for now)
 
 **How to use:**
 ```bash
@@ -35,13 +35,6 @@ git push origin v1.10.5
 ---
 
 ## Setup Required
-
-### For npm Publishing (release.yml)
-Add `NPM_TOKEN` to repository secrets:
-1. Go to https://github.com/h4cd0c/stratos-mcp/settings/secrets/actions
-2. Click "New repository secret"
-3. Name: `NPM_TOKEN`
-4. Value: Your npm access token from https://www.npmjs.com/settings/tokens
 
 ### For Code Coverage (test.yml)
 Optional - if you want coverage tracking:
