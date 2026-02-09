@@ -12,6 +12,8 @@
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
     "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
   },
+  "author": "h4cd0c",
+  "license": "MIT",
   "dependencies": {
     "@azure/arm-authorization": "^9.0.0",
     "@azure/arm-compute": "^23.2.0",
