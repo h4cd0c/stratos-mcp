@@ -2,12 +2,12 @@
 
 # Stratos - Azure Security Assessment MCP Server
 
-[![Version](https://img.shields.io/badge/version-1.10.6-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Version](https://img.shields.io/badge/version-1.10.7-blue.svg)](https://github.com/h4cd0c/stratos-mcp)
 [![Tests](https://img.shields.io/badge/tests-65%20passing-brightgreen.svg)](https://jestjs.io/)
-[![Tools](https://img.shields.io/badge/tools-32-green.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Tools](https://img.shields.io/badge/tools-32-green.svg)](https://github.com/h4cd0c/stratos-mcp)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 [![Azure SDK](https://img.shields.io/badge/Azure%20SDK-v4+-yellow.svg)](https://azure.microsoft.com/en-us/downloads/)
-[![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)](https://github.com/h4cd0c/stratos-mcp)
 
 **Enterprise-grade Azure security assessment toolkit with multi-location scanning, IMDS exploitation, attack path analysis, and compliance reporting**
 
@@ -337,7 +337,7 @@ MIT
 
 ## 🤝 Author
 
-**h4cd0c** - [GitHub](https://github.com/Jaikumar3)
+**h4cd0c** - [GitHub](https://github.com/h4cd0c)
 
 ---
 
