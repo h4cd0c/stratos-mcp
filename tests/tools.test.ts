@@ -226,7 +226,7 @@ describe('Input Schema Validation', () => {
 describe('Tool Grouping', () => {
   test('should have multi-location tools', () => {
     const multiLocationTools = EXPECTED_TOOLS.filter(t => 
-      t.includes('location') || t === 'scan_all_locations'
+      t.includes('location') || t === 'azure_scan_all_locations'
     );
     expect(multiLocationTools.length).toBeGreaterThanOrEqual(2);
   });
@@ -262,7 +262,9 @@ describe('Tool Naming Convention', () => {
     ];
 
     for (const tool of EXPECTED_TOOLS) {
-      const prefix = tool.split('_')[0];
+      // Skip azure_ prefix to get the actual verb
+      const parts = tool.split('_');
+      const prefix = parts[0] === 'azure' ? parts[1] : parts[0];
       const isValid = validPrefixes.includes(prefix);
       expect(isValid).toBe(true);
     }

@@ -2,7 +2,7 @@
 
 # Stratos - Azure Security Assessment MCP Server
 
-[![Version](https://img.shields.io/badge/version-1.10.4-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
+[![Version](https://img.shields.io/badge/version-1.10.6-blue.svg)](https://github.com/Jaikumar3/stratos-mcp)
 [![Tests](https://img.shields.io/badge/tests-65%20passing-brightgreen.svg)](https://jestjs.io/)
 [![Tools](https://img.shields.io/badge/tools-32-green.svg)](https://github.com/Jaikumar3/stratos-mcp)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
@@ -118,49 +118,49 @@
 ### Naming Convention
 | Prefix | Purpose |
 |--------|---------|
-| `enumerate_*` | List/discover resources |
-| `analyze_*` | Deep configuration analysis |
-| `scan_*` | Security assessment |
-| `get_*` | Retrieve specific data |
-| `detect_*` | Find threats/issues |
-| `generate_*` | Create output/reports |
+| `azure_enumerate_*` | List/discover resources |
+| `azure_analyze_*` | Deep configuration analysis |
+| `azure_scan_*` | Security assessment |
+| `azure_get_*` | Retrieve specific data |
+| `azure_detect_*` | Find threats/issues |
+| `azure_generate_*` | Create output/reports |
 
 ### Complete Tool List
 
 | # | Tool Name | Category | Description |
 |---|-----------|----------|-------------|
-| 1 | `help` | Info | Display comprehensive help and examples |
+| 1 | `azure_help` | Info | Display comprehensive help and examples |
 | 2 | `whoami` | Identity | Get current Azure identity information |
-| 3 | `enumerate_subscriptions` | Enumeration | List all accessible subscriptions |
-| 4 | `enumerate_resource_groups` | Enumeration | List resource groups in subscription |
-| 5 | `enumerate_resources` | Enumeration | List all resources (filterable by type) |
-| 6 | `get_resource_details` | Enumeration | Get detailed resource configuration |
-| 7 | `enumerate_public_ips` | Enumeration | Map internet-exposed attack surface |
-| 8 | `enumerate_rbac_assignments` | Enumeration | Audit access control and permissions |
-| 9 | `enumerate_managed_identities` | Enumeration | Track passwordless authentication |
-| 10 | `list_active_locations` | Multi-Location | Discover which Azure regions have resources |
-| 11 | `scan_all_locations` | Multi-Location | Scan resources across all 45+ Azure regions |
-| 12 | `analyze_storage_security` | Security | Scan storage accounts for misconfigurations |
-| 13 | `scan_storage_containers` | Security | Deep scan for sensitive files in blobs |
-| 14 | `analyze_nsg_rules` | Security | Identify risky firewall rules |
-| 15 | `scan_sql_databases` | Security | Check SQL security (TDE, firewall, auth) |
-| 16 | `analyze_keyvault_security` | Security | Audit Key Vault configuration |
-| 17 | `analyze_vm_security` | Security | Check VM disk encryption and patches |
-| 18 | `analyze_cosmosdb_security` | Security | Scan Cosmos DB security settings |
-| 19 | `scan_acr_security` | Security | Audit ACR security (admin user, scanning) |
-| 20 | `scan_service_principals` | Security | Find application identities and risks |
-| 21 | `scan_credential_exposure` | Security | Detect exposed credentials |
-| 22 | `generate_security_report` | Reporting | Professional reports (PDF/HTML/CSV/JSON) |
-| 23 | `analyze_attack_paths` | Analysis | Map privilege escalation chains |
-| 24 | `get_aks_credentials` | Kubernetes | Extract kubeconfig credentials |
-| 25 | `scan_aks_full` | Kubernetes | Comprehensive ARM-based AKS assessment (30+ CIS checks) |
-| 26 | `scan_aks_live` | Kubernetes | Direct K8s API scanning (secrets, RBAC, pods, SAs) |
-| 27 | `scan_aks_imds` | Kubernetes | IMDS exploitation & token theft (cluster-wide, export, deep read) |
-| 28 | `scan_azure_devops` | DevOps | Detect hardcoded secrets in repos/pipelines |
-| 29 | `analyze_function_apps` | Compute | Function App security analysis |
-| 30 | `analyze_app_service_security` | Compute | App Service security assessment |
-| 31 | `analyze_firewall_policies` | Network | Azure Firewall policy analysis |
-| 32 | `analyze_logic_apps` | Integration | Logic Apps workflow security |
+| 3 | `azure_enumerate_subscriptions` | Enumeration | List all accessible subscriptions |
+| 4 | `azure_enumerate_resource_groups` | Enumeration | List resource groups in subscription |
+| 5 | `azure_enumerate_resources` | Enumeration | List all resources (filterable by type) |
+| 6 | `azure_get_resource_details` | Enumeration | Get detailed resource configuration |
+| 7 | `azure_enumerate_public_ips` | Enumeration | Map internet-exposed attack surface |
+| 8 | `azure_enumerate_rbac_assignments` | Enumeration | Audit access control and permissions |
+| 9 | `azure_enumerate_managed_identities` | Enumeration | Track passwordless authentication |
+| 10 | `azure_list_active_locations` | Multi-Location | Discover which Azure regions have resources |
+| 11 | `azure_scan_all_locations` | Multi-Location | Scan resources across all 45+ Azure regions |
+| 12 | `azure_analyze_storage_security` | Security | Scan storage accounts for misconfigurations |
+| 13 | `azure_scan_storage_containers` | Security | Deep scan for sensitive files in blobs |
+| 14 | `azure_analyze_nsg_rules` | Security | Identify risky firewall rules |
+| 15 | `azure_scan_sql_databases` | Security | Check SQL security (TDE, firewall, auth) |
+| 16 | `azure_analyze_keyvault_security` | Security | Audit Key Vault configuration |
+| 17 | `azure_analyze_vm_security` | Security | Check VM disk encryption and patches |
+| 18 | `azure_analyze_cosmosdb_security` | Security | Scan Cosmos DB security settings |
+| 19 | `azure_scan_acr_security` | Security | Audit ACR security (admin user, scanning) |
+| 20 | `azure_scan_service_principals` | Security | Find application identities and risks |
+| 21 | `azure_scan_credential_exposure` | Security | Detect exposed credentials |
+| 22 | `azure_generate_security_report` | Reporting | Professional reports (PDF/HTML/CSV/JSON) |
+| 23 | `azure_analyze_attack_paths` | Analysis | Map privilege escalation chains |
+| 24 | `azure_get_aks_credentials` | Kubernetes | Extract kubeconfig credentials |
+| 25 | `azure_scan_aks_full` | Kubernetes | Comprehensive ARM-based AKS assessment (30+ CIS checks) |
+| 26 | `azure_scan_aks_live` | Kubernetes | Direct K8s API scanning (secrets, RBAC, pods, SAs) |
+| 27 | `azure_scan_aks_imds` | Kubernetes | IMDS exploitation & token theft (cluster-wide, export, deep read) |
+| 28 | `azure_scan_azure_devops` | DevOps | Detect hardcoded secrets in repos/pipelines |
+| 29 | `azure_analyze_function_apps` | Compute | Function App security analysis |
+| 30 | `azure_analyze_app_service_security` | Compute | App Service security assessment |
+| 31 | `azure_analyze_firewall_policies` | Network | Azure Firewall policy analysis |
+| 32 | `azure_analyze_logic_apps` | Integration | Logic Apps workflow security |
 
 ---
 
@@ -195,8 +195,67 @@ Add to `.vscode/mcp.json`:
 ```
 
 ---
+## 🛡️ Input Validation & Auto-Completion ⭐ NEW
 
-## 📊 Example Workflows
+**Enhanced Security (OWASP MCP-05 Compliance):**
+- **Pattern-Based Validation** - Regex validation for all Azure resource identifiers (subscription IDs, resource groups, locations, etc.)
+- **Whitelist Validation** - Location names and resource types validated against Azure service catalogs
+- **Sanitization** - Automatic removal of control characters and length enforcement
+- **Clear Error Messages** - Helpful validation errors guide users to correct input formats
+
+**Improved User Experience:**
+- **Auto-Completion Support** - Intelligent suggestions for locations, resource types, formats, and scan modes
+- **Prefix Filtering** - Type-ahead suggestions as you enter values
+- **Context-Aware** - Suggests relevant values based on the current tool and argument
+
+Supported completions:
+- `location`/`locations` - All 60+ Azure locations + "all", "common"
+- `resourceType` - VMs, Storage, NSGs, AKS, SQL, Key Vaults, Public IPs, All
+- `format` - markdown, json, html, pdf, csv
+- `scanMode` - common, all
+- `startFrom` - public-ips, storage, vms, identities, all
+
+---
+## � Output Format Control ⭐ NEW
+
+All 30 security tools now support flexible output formatting via the optional `format` parameter:
+
+**Markdown (Default)** - Human-readable output, perfect for documentation and reports
+```bash
+#azure_whoami
+# Returns: Clean markdown text (backward compatible)
+```
+
+**JSON** - Machine-readable structured data with metadata for automation
+```bash
+#azure_whoami format: json
+# Returns: { "tool": "azure_whoami", "format": "json", "timestamp": "...", "data": {...} }
+```
+
+**Key Benefits:**
+- ✅ **Backward Compatible** - Existing tools work without changes (defaults to markdown)
+- ✅ **API Integration** - JSON format enables programmatic consumption
+- ✅ **Automation** - Parse structured data for CI/CD pipelines
+- ✅ **Metadata** - JSON includes tool name, timestamp, and versioning
+- ✅ **Flexible** - Choose format per-tool based on use case
+
+**Supported Tools:** All security scanners, enumerators, and analyzers (30 tools total)
+
+**Example Use Cases:**
+```bash
+# Export scan results to JSON for automation
+#azure_analyze_storage_security subscriptionId: YOUR_SUB format: json > results.json
+
+# Human-readable documentation output (default)
+#azure_scan_sql_databases subscriptionId: YOUR_SUB
+
+# Structured data for API integration
+#azure_analyze_attack_paths subscriptionId: YOUR_SUB format: json
+```
+
+---
+
+## �📊 Example Workflows
 
 ### 1. Generate PDF Security Report
 ```bash

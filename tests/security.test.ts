@@ -15,10 +15,10 @@ describe('Security Properties', () => {
       ];
 
       const toolNames = [
-        'enumerate_subscriptions',
-        'scan_aks_imds',
-        'analyze_storage_security',
-        'get_resource_details'
+        'azure_enumerate_subscriptions',
+        'azure_scan_aks_imds',
+        'azure_analyze_storage_security',
+        'azure_get_resource_details'
       ];
 
       for (const tool of toolNames) {

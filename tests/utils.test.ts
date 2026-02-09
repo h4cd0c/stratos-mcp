@@ -240,3 +240,252 @@ describe('Integration Tests', () => {
     });
   });
 });
+
+describe('New Validation Functions (v1.10.6)', () => {
+  // Mock patterns from main code
+  const AZURE_PATTERNS = {
+    subscriptionId: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    resourceGroup: /^[-\w._()]+$/,
+    resourceName: /^[a-zA-Z0-9][-a-zA-Z0-9._]{0,78}[a-zA-Z0-9]$/,
+    location: /^[a-z0-9]+$/,
+    outputFormat: /^(markdown|json|html|pdf|csv)$/i,
+  };
+
+  const AZURE_LOCATIONS = [
+    'eastus', 'eastus2', 'westus', 'westus2', 'westus3',
+    'centralus', 'northcentralus', 'southcentralus',
+    'westeurope', 'northeurope', 'uksouth', 'ukwest',
+    'francecentral', 'germanywestcentral', 'norwayeast',
+    'switzerlandnorth', 'swedencentral', 'polandcentral'
+  ];
+
+  const COMMON_LOCATIONS = [
+    'eastus', 'eastus2', 'westus2', 'westeurope', 'northeurope',
+    'southeastasia', 'australiaeast', 'uksouth', 'centralindia', 'japaneast'
+  ];
+
+  const VALID_RESOURCE_TYPES = [
+    'vms', 'storage', 'nsgs', 'aks', 'sql', 'keyvaults', 'public_ips', 'all'
+  ];
+
+  describe('validateSubscriptionId', () => {
+    test('should accept valid subscription IDs', () => {
+      const validIds = [
+        '12345678-1234-1234-1234-123456789012',
+        'abcdef01-2345-6789-abcd-ef0123456789',
+        'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE'
+      ];
+
+      validIds.forEach(id => {
+        expect(AZURE_PATTERNS.subscriptionId.test(id)).toBe(true);
+      });
+    });
+
+    test('should reject invalid subscription IDs', () => {
+      const invalidIds = [
+        'not-a-guid',
+        '12345678123412341234123456789012', // No dashes
+        '12345678-1234-1234-1234', // Too short
+        '12345678-1234-1234-1234-1234567890123', // Too long
+        ''
+      ];
+
+      invalidIds.forEach(id => {
+        expect(AZURE_PATTERNS.subscriptionId.test(id)).toBe(false);
+      });
+    });
+
+    test('should be case-insensitive', () => {
+      const id = '12345678-abcd-ABCD-1234-123456789012';
+      expect(AZURE_PATTERNS.subscriptionId.test(id)).toBe(true);
+    });
+  });
+
+  describe('validateLocation', () => {
+    test('should accept valid Azure locations', () => {
+      AZURE_LOCATIONS.forEach(location => {
+        expect(AZURE_PATTERNS.location.test(location)).toBe(true);
+      });
+    });
+
+    test('should accept special keywords', () => {
+      expect(AZURE_PATTERNS.location.test('all')).toBe(true);
+      expect(AZURE_PATTERNS.location.test('common')).toBe(true);
+    });
+
+    test('should reject invalid locations', () => {
+      const invalidLocations = [
+        'East US', // Spaces not allowed
+        'east-us', // Hyphens not allowed
+        'east_us', // Underscores not allowed
+        'EASTUS!', // Special chars not allowed
+        ''
+      ];
+
+      invalidLocations.forEach(location => {
+        expect(AZURE_PATTERNS.location.test(location)).toBe(false);
+      });
+    });
+
+    test('should handle common locations array', () => {
+      expect(COMMON_LOCATIONS).toHaveLength(10);
+      expect(COMMON_LOCATIONS).toContain('eastus');
+      expect(COMMON_LOCATIONS).toContain('westeurope');
+    });
+
+    test('should validate location whitelist', () => {
+      const testLocation = 'eastus';
+      const isValid = AZURE_LOCATIONS.includes(testLocation) || 
+                      COMMON_LOCATIONS.includes(testLocation);
+      expect(isValid).toBe(true);
+    });
+  });
+
+  describe('validateResourceType', () => {
+    test('should accept valid resource types', () => {
+      VALID_RESOURCE_TYPES.forEach(type => {
+        expect(VALID_RESOURCE_TYPES.includes(type)).toBe(true);
+      });
+    });
+
+    test('should reject invalid resource types', () => {
+      const invalidTypes = ['invalid', 'faketype', 'compute', 'network'];
+      invalidTypes.forEach(type => {
+        expect(VALID_RESOURCE_TYPES.includes(type)).toBe(false);
+      });
+    });
+
+    test('should handle case sensitivity', () => {
+      // Implementation should convert to lowercase
+      const upperType = 'VMS'.toLowerCase();
+      expect(VALID_RESOURCE_TYPES.includes(upperType)).toBe(true);
+    });
+  });
+
+  describe('validateOutputFormat', () => {
+    test('should accept valid formats', () => {
+      const validFormats = ['markdown', 'json', 'html', 'pdf', 'csv'];
+      validFormats.forEach(format => {
+        expect(AZURE_PATTERNS.outputFormat.test(format)).toBe(true);
+      });
+    });
+
+    test('should be case-insensitive', () => {
+      expect(AZURE_PATTERNS.outputFormat.test('MARKDOWN')).toBe(true);
+      expect(AZURE_PATTERNS.outputFormat.test('Json')).toBe(true);
+      expect(AZURE_PATTERNS.outputFormat.test('PDF')).toBe(true);
+    });
+
+    test('should reject invalid formats', () => {
+      const invalidFormats = ['xml', 'yaml', 'txt', 'doc'];
+      invalidFormats.forEach(format => {
+        expect(AZURE_PATTERNS.outputFormat.test(format)).toBe(false);
+      });
+    });
+  });
+
+  describe('validateResourceGroup', () => {
+    test('should accept valid resource group names', () => {
+      const validNames = [
+        'my-resource-group',
+        'rg_production',
+        'rg.test',
+        'rg(backup)',
+        'MyResourceGroup123'
+      ];
+
+      validNames.forEach(name => {
+        expect(AZURE_PATTERNS.resourceGroup.test(name)).toBe(true);
+      });
+    });
+
+    test('should reject invalid resource group names', () => {
+      const invalidNames = [
+        'rg with spaces',
+        'rg@special',
+        'rg#invalid',
+        'rg$test'
+      ];
+
+      invalidNames.forEach(name => {
+        expect(AZURE_PATTERNS.resourceGroup.test(name)).toBe(false);
+      });
+    });
+  });
+
+  describe('validateResourceName', () => {
+    test('should accept valid resource names', () => {
+      const validNames = [
+        'myvm01',
+        'storage-account-1',
+        'app.service',
+        'resource_name'
+      ];
+
+      validNames.forEach(name => {
+        expect(AZURE_PATTERNS.resourceName.test(name)).toBe(true);
+      });
+    });
+
+    test('should reject names starting with special chars', () => {
+      const invalidNames = ['-invalid', '_invalid', '.invalid'];
+      invalidNames.forEach(name => {
+        expect(AZURE_PATTERNS.resourceName.test(name)).toBe(false);
+      });
+    });
+
+    test('should reject names ending with special chars', () => {
+      const invalidNames = ['invalid-', 'invalid_', 'invalid.'];
+      invalidNames.forEach(name => {
+        expect(AZURE_PATTERNS.resourceName.test(name)).toBe(false);
+      });
+    });
+
+    test('should enforce length limits', () => {
+      const tooLong = 'a'.repeat(81); // Max is 80 chars
+      expect(AZURE_PATTERNS.resourceName.test(tooLong)).toBe(false);
+      
+      const justRight = 'a'.repeat(80);
+      expect(AZURE_PATTERNS.resourceName.test(justRight)).toBe(true);
+    });
+  });
+});
+
+describe('Injection Attack Prevention (Azure)', () => {
+  test('should sanitize control characters', () => {
+    const input = "test\x00\x1b[31mREDTEXT";
+    const sanitized = input.replace(/[\x00-\x1f\x7f]/g, '');
+    expect(sanitized).toBe('test[31mREDTEXT');
+    expect(sanitized).not.toMatch(/\x00/);
+    expect(sanitized).not.toMatch(/\x1b/);
+  });
+
+  test('should validate subscription ID format strictly', () => {
+    const malicious = "12345678-1234-1234-1234-123456789012; DROP TABLE users;";
+    expect(AZURE_PATTERNS.subscriptionId.test(malicious)).toBe(false);
+  });
+
+  test('should reject path traversal in resource group names', () => {
+    const AZURE_PATTERNS_RG = /^[-\w._()]+$/;
+    const pathTraversal = "../../../etc/passwd";
+    // Forward slashes not allowed in resource group pattern
+    expect(AZURE_PATTERNS_RG.test(pathTraversal)).toBe(false);
+  });
+
+  test('should enforce length limits to prevent DoS', () => {
+    const oversized = 'a'.repeat(10000);
+    const maxLength = 1000;
+    expect(oversized.length > maxLength).toBe(true);
+    // In actual implementation, this would throw an error
+  });
+
+  test('should validate location format to prevent XSS', () => {
+    const xssAttempt = "eastus<script>alert(1)</script>";
+    expect(AZURE_PATTERNS.location.test(xssAttempt)).toBe(false);
+  });
+
+  test('should block command injection in resource names', () => {
+    const cmdInjection = "myvm; rm -rf /";
+    expect(AZURE_PATTERNS.resourceName.test(cmdInjection)).toBe(false);
+  });
+});

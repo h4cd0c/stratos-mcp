@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  CompleteRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { AzureCliCredential, DefaultAzureCredential, ChainedTokenCredential } from "@azure/identity";
 import { SubscriptionClient } from "@azure/arm-subscriptions";
@@ -25,6 +26,11 @@ import { createObjectCsvWriter } from "csv-writer";
 import * as fs from "fs";
 import * as path from "path";
 import * as k8s from "@kubernetes/client-node";
+
+// Error Handling & Logging Infrastructure (v1.10.7)
+import { logger, performanceTracker } from "./logging.js";
+import { normalizeError, MCPError, ValidationError, formatErrorMarkdown, formatErrorJSON } from "./errors.js";
+import { retry, retryWithTimeout } from "./retry.js";
 
 // Initialize Azure credential - PRIORITIZE Azure CLI over VS Code extension
 // This fixes the issue where VS Code's internal service principal is used instead of user's az login
@@ -71,15 +77,223 @@ function filterByLocation<T extends { location?: string }>(resources: T[], locat
   return resources.filter(r => r.location && locations.includes(r.location.toLowerCase()));
 }
 
+// Helper to format tool output based on format parameter
+function formatResponse(data: any, format: string | undefined, toolName: string): string {
+  // Default to markdown for backward compatibility
+  format = format || 'markdown';
+  
+  // Validate format parameter
+  if (format !== 'markdown' && format !== 'json') {
+    throw new Error(`Invalid format: ${format}. Must be 'markdown' or 'json'.`);
+  }
+  
+  if (format === 'json') {
+    // Wrap in structured envelope with metadata
+    return JSON.stringify({
+      tool: toolName,
+      format: 'json',
+      timestamp: new Date().toISOString(),
+      data: typeof data === 'string' ? { markdownOutput: data } : data
+    }, null, 2);
+  }
+  
+  // Markdown mode: return raw result unchanged (backward compatible)
+  return typeof data === 'string' ? data : JSON.stringify(data);
+}
+
+// ============================================
+// INPUT VALIDATION (Security Enhancement)
+// ============================================
+
+/**
+ * Azure resource ID patterns for validation
+ */
+const AZURE_PATTERNS = {
+  subscriptionId: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  resourceGroup: /^[-\w._()]+$/,
+  resourceName: /^[a-zA-Z0-9][-a-zA-Z0-9._]{0,78}[a-zA-Z0-9]$/,
+  location: /^[a-z]+$/,
+  outputFormat: /^(markdown|json)$/,
+  scanMode: /^(common|all)$/,
+  email: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
+};
+
+/**
+ * Valid Azure resource types for multi-location scanning
+ */
+const VALID_RESOURCE_TYPES = [
+  "vms", "storage", "nsgs", "aks", "sql", "keyvaults", "public_ips", "all"
+];
+
+/**
+ * Validate generic string input with sanitization
+ */
+function validateInput(
+  input: string | undefined,
+  options: {
+    required?: boolean;
+    maxLength?: number;
+    pattern?: RegExp;
+    patternName?: string;
+    allowedValues?: string[];
+  } = {}
+): string | undefined {
+  if (input === undefined || input === null || input === '') {
+    if (options.required) {
+      throw new ValidationError('Required input is missing', { field: 'input' });
+    }
+    return undefined;
+  }
+  
+  // Sanitize: trim and remove control characters
+  const sanitized = input.toString().trim().replace(/[\x00-\x1f\x7f]/g, '');
+  
+  // Length check
+  const maxLen = options.maxLength || 1000;
+  if (sanitized.length > maxLen) {
+    throw new ValidationError(
+      `Input exceeds maximum length of ${maxLen} characters`,
+      { provided: sanitized.length, maxLength: maxLen }
+    );
+  }
+  
+  // Allowed values check
+  if (options.allowedValues && !options.allowedValues.includes(sanitized)) {
+    throw new ValidationError(
+      `Invalid value: ${sanitized}. Allowed: ${options.allowedValues.join(', ')}`,
+      { provided: sanitized, allowed: options.allowedValues }
+    );
+  }
+  
+  // Pattern validation
+  if (options.pattern && !options.pattern.test(sanitized)) {
+    const name = options.patternName || 'input';
+    throw new ValidationError(
+      `Invalid ${name} format: ${sanitized}`,
+      { provided: sanitized, pattern: options.pattern.toString() }
+    );
+  }
+  
+  return sanitized;
+}
+
+/**
+ * Validate Azure subscription ID
+ */
+function validateSubscriptionId(subscriptionId: string | undefined, required: boolean = true): string | undefined {
+  if (!subscriptionId && !required) return undefined;
+  if (!subscriptionId && required) {
+    throw new ValidationError('Subscription ID is required', { field: 'subscriptionId' });
+  }
+  
+  return validateInput(subscriptionId, {
+    required,
+    pattern: AZURE_PATTERNS.subscriptionId,
+    patternName: 'subscription ID',
+    maxLength: 36,
+  });
+}
+
+/**
+ * Validate Azure location
+ */
+function validateLocation(location: string | undefined, allowMultiple: boolean = false): string | undefined {
+  if (!location) return undefined;
+  
+  const sanitized = location.trim().toLowerCase();
+  
+  // Allow special values
+  if (sanitized === 'all' || sanitized === 'common') {
+    return sanitized;
+  }
+  
+  // Allow comma-separated values if allowMultiple
+  if (allowMultiple && sanitized.includes(',')) {
+    const locations = sanitized.split(',').map(l => l.trim());
+    locations.forEach(loc => {
+      if (!AZURE_PATTERNS.location.test(loc) && !AZURE_LOCATIONS.includes(loc) && !COMMON_LOCATIONS.includes(loc)) {
+        throw new Error(`Invalid Azure location: ${loc}`);
+      }
+    });
+    return sanitized;
+  }
+  
+  // Single location validation
+  if (!AZURE_PATTERNS.location.test(sanitized)) {
+    throw new Error(`Invalid Azure location format: ${location}`);
+  }
+  
+  // Whitelist check
+  if (!AZURE_LOCATIONS.includes(sanitized) && !COMMON_LOCATIONS.includes(sanitized)) {
+    throw new Error(`Unknown Azure location: ${location}. Use one of: ${COMMON_LOCATIONS.slice(0, 5).join(', ')}...`);
+  }
+  
+  return sanitized;
+}
+
+/**
+ * Validate resource type
+ */
+function validateResourceType(resourceType: string | undefined): string {
+  if (!resourceType) {
+    throw new Error('Resource type is required');
+  }
+  
+  return validateInput(resourceType, {
+    required: true,
+    allowedValues: VALID_RESOURCE_TYPES,
+    patternName: 'resource type',
+  })!;
+}
+
+/**
+ * Validate output format
+ */
+function validateOutputFormat(format: string | undefined): 'markdown' | 'json' {
+  if (!format) return 'markdown';
+  
+  const sanitized = format.trim().toLowerCase();
+  if (sanitized !== 'markdown' && sanitized !== 'json') {
+    throw new Error(`Invalid format: ${format}. Must be 'markdown' or 'json'.`);
+  }
+  
+  return sanitized as 'markdown' | 'json';
+}
+
+/**
+ * Validate resource group name
+ */
+function validateResourceGroup(resourceGroup: string | undefined, required: boolean = false): string | undefined {
+  return validateInput(resourceGroup, {
+    required,
+    maxLength: 90,
+    pattern: AZURE_PATTERNS.resourceGroup,
+    patternName: 'resource group',
+  });
+}
+
+/**
+ * Validate resource name
+ */
+function validateResourceName(resourceName: string | undefined, required: boolean = false): string | undefined {
+  return validateInput(resourceName, {
+    required,
+    maxLength: 80,
+    pattern: AZURE_PATTERNS.resourceName,
+    patternName: 'resource name',
+  });
+}
+
 // Create MCP server instance
 const server = new Server(
   {
     name: "stratos-mcp",
-    "version": "1.9.1",
+    "version": "1.10.6",
   },
   {
     capabilities: {
       tools: {},
+      completions: {},
     },
   }
 );
@@ -89,7 +303,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
-        name: "help",
+        name: "azure_help",
         description: "Display comprehensive help information about all available Azure penetration testing tools and usage examples",
         inputSchema: {
           type: "object",
@@ -103,7 +317,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "list_active_locations",
+        name: "azure_list_active_locations",
         description: "Discover which Azure locations have resources deployed. Quick scan to identify active regions before deep scanning. Checks resource groups, VMs, storage accounts, and AKS clusters.",
         inputSchema: {
           type: "object",
@@ -117,6 +331,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               enum: ["common", "all"],
               description: "Preset scan mode: 'common' (10 locations) or 'all' (45+ locations). Default: common",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -128,7 +347,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "scan_all_locations",
+        name: "azure_scan_all_locations",
         description: "Scan multiple Azure locations for resources. Supports: vms, storage, nsgs, aks, sql, keyvaults, public_ips, all. Specify custom locations OR use presets ('common'=10 locations, 'all'=45+ locations).",
         inputSchema: {
           type: "object",
@@ -146,6 +365,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Custom locations to scan (comma-separated). Examples: 'eastus' or 'eastus,westeurope,southeastasia'. Use 'common' for 10 main locations or 'all' for 45+ locations.",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId", "resourceType"],
         },
@@ -157,7 +381,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "enumerate_subscriptions",
+        name: "azure_enumerate_subscriptions",
         description: "Enumerate all Azure subscriptions accessible with current credentials. Returns subscription ID, name, state, and tenant ID.",
         annotations: {
           readOnly: true,
@@ -167,11 +391,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
+          },
         },
       },
       {
-        name: "enumerate_resource_groups",
+        name: "azure_enumerate_resource_groups",
         description: "Enumerate all resource groups in a specific subscription. Returns name, location, ID, and tags. Supports location filtering.",
         inputSchema: {
           type: "object",
@@ -184,6 +414,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Filter by location(s): single (e.g., 'eastus'), multiple (e.g., 'eastus,westeurope'), or preset ('common', 'all')",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -195,7 +430,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "enumerate_resources",
+        name: "azure_enumerate_resources",
         description: "Enumerate all resources in a subscription or resource group. Can filter by resource type and location. Returns resource name, type, location, ID, and tags.",
         inputSchema: {
           type: "object",
@@ -216,6 +451,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Filter by location(s): single (e.g., 'eastus'), multiple (e.g., 'eastus,westeurope'), or preset ('common', 'all')",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -227,7 +467,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "get_resource_details",
+        name: "azure_get_resource_details",
         description: "Get detailed configuration and properties of a specific Azure resource. Useful for analyzing security settings, network configs, encryption status, etc.",
         inputSchema: {
           type: "object",
@@ -252,6 +492,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Resource name",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId", "resourceGroup", "resourceProvider", "resourceType", "resourceName"],
         },
@@ -263,7 +508,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "analyze_storage_security",
+        name: "azure_analyze_storage_security",
         description: "Analyze security configuration of all storage accounts in a subscription. Checks: public blob access, firewall rules, encryption, secure transfer (HTTPS), private endpoints, minimum TLS version. Returns prioritized security findings with risk levels (CRITICAL/HIGH/MEDIUM/LOW).",
         inputSchema: {
           type: "object",
@@ -276,6 +521,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Filter by specific resource group",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -287,7 +537,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "analyze_nsg_rules",
+        name: "azure_analyze_nsg_rules",
         description: "Automated Network Security Group (NSG) security analysis. Identifies: open management ports (RDP 3389, SSH 22, WinRM 5985/5986), database ports (SQL 1433, MySQL 3306, PostgreSQL 5432, MongoDB 27017), wildcard source rules (0.0.0.0/0, Internet, Any), overly permissive rules. Returns findings with risk severity and remediation recommendations.",
         inputSchema: {
           type: "object",
@@ -304,6 +554,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Analyze specific NSG by name",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -315,7 +570,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "enumerate_public_ips",
+        name: "azure_enumerate_public_ips",
         description: "Enumerate all public IP addresses in a subscription to map internet-exposed attack surface. Returns: IP address, DNS name, allocation method (Static/Dynamic), associated resource (VM, Load Balancer, App Gateway, etc.), resource group, location. Critical for identifying external entry points.",
         inputSchema: {
           type: "object",
@@ -328,6 +583,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Filter by specific resource group",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -339,7 +599,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "enumerate_rbac_assignments",
+        name: "azure_enumerate_rbac_assignments",
         description: "Enumerate Role-Based Access Control (RBAC) assignments to identify who has access to what. Returns: principal name and type (User/ServicePrincipal/Group), role definition (Owner/Contributor/Reader/Custom), scope (Subscription/ResourceGroup/Resource), principal ID. Useful for identifying privileged accounts, service principals with excessive permissions, and potential privilege escalation paths.",
         inputSchema: {
           type: "object",
@@ -352,6 +612,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Specific scope to analyze (e.g., /subscriptions/{id}/resourceGroups/{rg}). If not provided, analyzes entire subscription.",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -363,7 +628,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "scan_sql_databases",
+        name: "azure_scan_sql_databases",
         description: "Comprehensive SQL Database security scanner. Checks: TDE encryption status, firewall rules (detects 0.0.0.0-255.255.255.255 allow-all), Azure AD authentication vs SQL auth, auditing enabled, public endpoint exposure, threat detection. Returns CRITICAL/HIGH/MEDIUM findings with CWE references and attack vectors.",
         inputSchema: {
           type: "object",
@@ -376,6 +641,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Filter by specific resource group",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -387,7 +657,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "analyze_keyvault_security",
+        name: "azure_analyze_keyvault_security",
         description: "Key Vault security assessment. Checks: soft delete disabled (data loss risk), purge protection disabled, public network access enabled, RBAC vs Access Policies, secret/certificate expiration, diagnostic logging. Returns risk-scored findings (CRITICAL/HIGH/MEDIUM/LOW) with remediation guidance.",
         inputSchema: {
           type: "object",
@@ -400,6 +670,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Filter by specific resource group",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -411,7 +686,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "analyze_cosmosdb_security",
+        name: "azure_analyze_cosmosdb_security",
         description: "Cosmos DB security analyzer. Checks: public network access enabled, firewall rules (IP restrictions), encryption at rest, automatic failover, backup retention policy, virtual network rules. Returns security findings with compliance mapping.",
         inputSchema: {
           type: "object",
@@ -424,6 +699,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Filter by specific resource group",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -435,7 +715,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "analyze_vm_security",
+        name: "azure_analyze_vm_security",
         description: "Virtual Machine security scanner. Checks: OS disk encryption (BitLocker/dm-crypt), data disk encryption, security extensions (Microsoft Defender, Azure Monitor Agent), boot diagnostics storage access, patch management status, Just-in-Time VM access. Returns vulnerability findings with exploitation paths.",
         inputSchema: {
           type: "object",
@@ -448,6 +728,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Filter by specific resource group",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -459,7 +744,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "scan_acr_security",
+        name: "azure_scan_acr_security",
         description: "Azure Container Registry (ACR) security scanner. Checks: admin user enabled (high risk), public network access, vulnerability scanning enabled (Defender for Containers), content trust (image signing), network rules, anonymous pull access. Returns container security findings.",
         inputSchema: {
           type: "object",
@@ -472,25 +757,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Filter by specific resource group",
             },
-          },
-          required: ["subscriptionId"],
-        },
-        annotations: {
-          readOnly: true,
-          destructive: false,
-          idempotent: false,
-          openWorld: true
-        }
-      },
-      {
-        name: "enumerate_service_principals",
-        description: "Enumerate all service principals (application identities) in the tenant. Returns: service principal names, application IDs, credential expiration dates, application permissions (Microsoft Graph API), owner information, orphaned/unused SPNs. Critical for identifying over-privileged applications and credential lifecycle management.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            subscriptionId: {
+            format: {
               type: "string",
-              description: "Azure subscription ID (used for authentication context)",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
             },
           },
           required: ["subscriptionId"],
@@ -503,7 +773,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "enumerate_managed_identities",
+        name: "azure_enumerate_service_principals",
+        description: "Enumerate all service principals (application identities) in the tenant. Returns: service principal names, application IDs, credential expiration dates, application permissions (Microsoft Graph API), owner information, orphaned/unused SPNs. Critical for identifying over-privileged applications and credential lifecycle management.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID (used for authentication context)",
+            },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
+          },
+          required: ["subscriptionId"],
+        },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
+      },
+      {
+        name: "azure_enumerate_managed_identities",
         description: "Enumerate all managed identities (system-assigned and user-assigned) across subscription. Returns: identity type, associated resources, role assignments, scope of access, cross-subscription permissions. Essential for understanding passwordless authentication patterns and potential privilege escalation paths.",
         inputSchema: {
           type: "object",
@@ -516,6 +811,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Filter by specific resource group",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -527,7 +827,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "scan_storage_containers",
+        name: "azure_scan_storage_containers",
         description: "Deep scan of storage account containers and blobs. Lists all containers, checks container-level public access, enumerates blobs, detects sensitive files (backups, configs, keys: *.bak, web.config, appsettings.json, *.key, *.pem, *.sql). Identifies SAS tokens, checks blob encryption, finds orphaned blobs. CRITICAL for data exposure assessment.",
         inputSchema: {
           type: "object",
@@ -548,6 +848,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "number",
               description: "Optional: Maximum blobs to list per container (default: 100, prevents timeout on large containers)",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -559,7 +864,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "generate_security_report",
+        name: "azure_generate_security_report",
         description: "Generate comprehensive security assessment report from scan results. NEW: Supports PDF, HTML, CSV export. Produces executive summary, risk prioritization, findings by severity (CRITICAL/HIGH/MEDIUM/LOW), remediation matrix, compliance mapping (CIS/NIST), and detailed vulnerability analysis. Aggregates all security scanner results into professional deliverable.",
         inputSchema: {
           type: "object",
@@ -604,7 +909,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "analyze_attack_paths",
+        name: "azure_analyze_attack_paths",
         description: "Identify and map attack paths from public exposure to sensitive resources. Analyzes: privilege escalation chains (RBAC roles → resources), lateral movement opportunities (VM → managed identity → secrets), exposed credentials to resource access, public IP → NSG → VM → identity → data flows. Returns exploitation scenarios with step-by-step attack chains.",
         inputSchema: {
           type: "object",
@@ -622,6 +927,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: "Optional: Starting point for attack path analysis ('public-ips', 'storage', 'vms', 'identities'). Default: analyze all entry points.",
               enum: ["public-ips", "storage", "vms", "identities", "all"],
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -633,7 +943,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "get_aks_credentials",
+        name: "azure_get_aks_credentials",
         description: "Extract AKS cluster credentials and kubeconfig for kubectl access. Returns: cluster FQDN, API server endpoint, admin credentials (if available), service principal details, managed identity info. OFFENSIVE USE: Obtain cluster access for manual kubectl exploitation, RBAC testing, pod deployment, secret extraction.",
         inputSchema: {
           type: "object",
@@ -654,6 +964,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "boolean",
               description: "Attempt to get admin credentials (requires Azure RBAC permissions). Default: false (user credentials)",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId", "resourceGroup", "clusterName"],
         },
@@ -665,7 +980,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "scan_azure_devops",
+        name: "azure_scan_azure_devops",
         description: "Azure DevOps security scanner. Enumerates: organizations, projects, repositories, pipelines, service connections, variable groups, PAT tokens. Checks for: exposed secrets in repos, over-privileged service connections, insecure pipeline configurations, leaked credentials. OFFENSIVE USE: Find deployment credentials, API keys in source code, service principal secrets in pipelines.",
         inputSchema: {
           type: "object",
@@ -686,6 +1001,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "boolean",
               description: "Scan pipelines for exposed credentials (default: true)",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["organizationUrl", "personalAccessToken"],
         },
@@ -698,7 +1018,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       // ========== NEW SECURITY TOOLS ==========
       {
-        name: "analyze_function_apps",
+        name: "azure_analyze_function_apps",
         description: "Azure Functions security analysis: authentication settings, managed identity, VNet integration, CORS configuration, application settings for secrets, runtime version vulnerabilities",
         inputSchema: {
           type: "object",
@@ -711,6 +1031,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Filter by specific resource group",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -722,7 +1047,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "analyze_app_service_security",
+        name: "azure_analyze_app_service_security",
         description: "App Service security analysis: HTTPS-only, minimum TLS version, authentication, managed identity, VNet integration, IP restrictions, remote debugging status",
         inputSchema: {
           type: "object",
@@ -735,6 +1060,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Filter by specific resource group",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -746,7 +1076,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "analyze_firewall_policies",
+        name: "azure_analyze_firewall_policies",
         description: "Azure Firewall and NSG rule analysis: overly permissive rules, any-to-any rules, management port exposure, threat intelligence integration",
         inputSchema: {
           type: "object",
@@ -759,6 +1089,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Filter by specific resource group",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -770,7 +1105,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "analyze_logic_apps",
+        name: "azure_analyze_logic_apps",
         description: "Logic Apps security analysis: authentication, access control, managed identity usage, exposed endpoints, workflow triggers security",
         inputSchema: {
           type: "object",
@@ -783,6 +1118,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Filter by specific resource group",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId"],
         },
@@ -794,7 +1134,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "analyze_rbac_privesc",
+        name: "azure_analyze_rbac_privesc",
         description: "Deep RBAC analysis for privilege escalation paths: role assignment permissions, custom role vulnerabilities, subscription-level access, management group permissions",
         inputSchema: {
           type: "object",
@@ -807,25 +1147,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional: Specific principal ID to analyze escalation paths for",
             },
-          },
-          required: ["subscriptionId"],
-        },
-        annotations: {
-          readOnly: true,
-          destructive: false,
-          idempotent: false,
-          openWorld: true
-        }
-      },
-      {
-        name: "detect_persistence_mechanisms",
-        description: "Identify Azure persistence mechanisms: automation accounts, runbooks, Logic Apps triggers, scheduled tasks, webhook endpoints, custom script extensions",
-        inputSchema: {
-          type: "object",
-          properties: {
-            subscriptionId: {
+            format: {
               type: "string",
-              description: "Azure subscription ID",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
             },
           },
           required: ["subscriptionId"],
@@ -838,7 +1163,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "scan_aks_full",
+        name: "azure_detect_persistence_mechanisms",
+        description: "Identify Azure persistence mechanisms: automation accounts, runbooks, Logic Apps triggers, scheduled tasks, webhook endpoints, custom script extensions",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
+          },
+          required: ["subscriptionId"],
+        },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
+      },
+      {
+        name: "azure_scan_aks_full",
         description: "🚀 FULL AKS SECURITY SCAN - Runs ALL 7 AKS security checks in one shot: cluster security, credentials extraction, identity enumeration, node security, IMDS access testing, service account analysis, and secret hunting. Comprehensive Kubernetes security assessment.",
         inputSchema: {
           type: "object",
@@ -855,6 +1205,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "AKS cluster name",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId", "resourceGroup", "clusterName"],
         },
@@ -866,7 +1221,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "scan_aks_live",
+        name: "azure_scan_aks_live",
         description: "🔴 LIVE AKS SECURITY SCAN via Kubernetes API - Directly connects to cluster API server and performs real-time security analysis: enumerates secrets, service accounts, RBAC bindings, privileged pods, network policies, exposed services, and more. Requires cluster access.",
         inputSchema: {
           type: "object",
@@ -887,6 +1242,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Specific namespace to scan (optional, scans all namespaces if not specified)",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId", "resourceGroup", "clusterName"],
         },
@@ -898,7 +1258,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "scan_aks_imds",
+        name: "azure_scan_aks_imds",
         description: "IMDS exploitation and full reconnaissance - Complete attack chain: IMDS token theft, permission enumeration, resource discovery, data plane access testing. Tests Pod-to-IMDS-to-Azure attack path. Enumerates accessible subscriptions, resource groups, resources, role assignments, and tests data plane access (Storage, Key Vault, ACR). Supports token export for offline exploitation and cluster-wide IMDS exposure scanning.",
         inputSchema: {
           type: "object",
@@ -943,6 +1303,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "boolean",
               description: "Scan ALL pods cluster-wide for IMDS exposure (creates exposure heatmap). Slower but comprehensive assessment. Default: false",
             },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
           },
           required: ["subscriptionId", "resourceGroup", "clusterName"],
         },
@@ -957,11 +1322,122 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
+// Completion handler - provides intelligent auto-suggestions
+server.setRequestHandler(CompleteRequestSchema, async (request) => {
+  const { ref, argument } = request.params;
+  
+  // Subscription ID completions (don't suggest actual IDs for security)
+  if (argument.name === "subscriptionId") {
+    return {
+      completion: {
+        values: ["<your-subscription-id>"],
+        total: 1,
+        hasMore: false
+      }
+    };
+  }
+  
+  // Location completions
+  if (argument.name === "location" || argument.name === "locations") {
+    const partial = argument.value.toLowerCase();
+    const suggestions = [
+      ...COMMON_LOCATIONS.filter(l => l.startsWith(partial)),
+      ...["all", "common"].filter(s => s.startsWith(partial))
+    ];
+    
+    return {
+      completion: {
+        values: suggestions.slice(0, 20), // Limit to 20
+        total: suggestions.length,
+        hasMore: suggestions.length > 20
+      }
+    };
+  }
+  
+  // Resource type completions
+  if (argument.name === "resourceType") {
+    const partial = argument.value.toLowerCase();
+    const types = ["vms", "storage", "nsgs", "aks", "sql", "keyvaults", "public_ips", "all"];
+    const suggestions = types.filter(t => t.startsWith(partial));
+    
+    return {
+      completion: {
+        values: suggestions,
+        total: suggestions.length,
+        hasMore: false
+      }
+    };
+  }
+  
+  // Format completions
+  if (argument.name === "format") {
+    const partial = argument.value.toLowerCase();
+    const formats = ["markdown", "json", "html", "pdf", "csv"];
+    const suggestions = formats.filter(f => f.startsWith(partial));
+    
+    return {
+      completion: {
+        values: suggestions,
+        total: suggestions.length,
+        hasMore: false
+      }
+    };
+  }
+  
+  // Scan mode completions
+  if (argument.name === "scanMode") {
+    const partial = argument.value.toLowerCase();
+    const modes = ["common", "all"];
+    const suggestions = modes.filter(m => m.startsWith(partial));
+    
+    return {
+      completion: {
+        values: suggestions,
+        total: suggestions.length,
+        hasMore: false
+      }
+    };
+  }
+  
+  // Start from completions (for attack path analysis)
+  if (argument.name === "startFrom") {
+    const partial = argument.value.toLowerCase();
+    const options = ["public-ips", "storage", "vms", "identities", "all"];
+    const suggestions = options.filter(o => o.startsWith(partial));
+    
+    return {
+      completion: {
+        values: suggestions,
+        total: suggestions.length,
+        hasMore: false
+      }
+    };
+  }
+  
+  // No suggestions for this argument
+  return {
+    completion: {
+      values: [],
+      total: 0,
+      hasMore: false
+    }
+  };
+});
+
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+  
+  // Start performance tracking
+  const trackingId = performanceTracker.start(name);
+  
+  logger.info(`Tool invoked: ${name}`, { args }, name);
+  
   try {
-    switch (request.params.name) {
-      case "help": {
+    switch (name) {
+      case "azure_help": {
+        performanceTracker.end(trackingId, true);
+        logger.info(`Tool completed successfully: ${name}`, {}, name);
         const helpText = `# Stratos - Azure Security Assessment MCP Server
 
 ## Overview
@@ -1640,7 +2116,11 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         };
       }
 
-      case "enumerate_subscriptions": {
+      case "azure_enumerate_subscriptions": {
+        const { format } = request.params.arguments as {
+          format?: string;
+        };
+
         const client = new SubscriptionClient(credential);
         const subscriptions = [];
         
@@ -1653,20 +2133,23 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           });
         }
 
+        const output = `# Azure Subscriptions\n\nFound ${subscriptions.length} subscription(s):\n\n${JSON.stringify(subscriptions, null, 2)}`;
+
         return {
           content: [
             {
               type: "text",
-              text: `# Azure Subscriptions\n\nFound ${subscriptions.length} subscription(s):\n\n${JSON.stringify(subscriptions, null, 2)}`,
+              text: formatResponse(output, format, request.params.name),
             },
           ],
         };
       }
 
-      case "list_active_locations": {
-        const { subscriptionId, scanMode } = request.params.arguments as {
+      case "azure_list_active_locations": {
+        const { subscriptionId, scanMode, format } = request.params.arguments as {
           subscriptionId: string;
           scanMode?: "common" | "all";
+          format?: string;
         };
 
         const locationsToCheck = scanMode === "all" ? AZURE_LOCATIONS : COMMON_LOCATIONS;
@@ -1732,15 +2215,16 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
 
         return {
-          content: [{ type: "text", text: output }],
+          content: [{ type: "text", text: formatResponse(output, format, request.params.name) }],
         };
       }
 
-      case "scan_all_locations": {
-        const { subscriptionId, resourceType, locations } = request.params.arguments as {
+      case "azure_scan_all_locations": {
+        const { subscriptionId, resourceType, locations, format } = request.params.arguments as {
           subscriptionId: string;
           resourceType: "vms" | "storage" | "nsgs" | "aks" | "sql" | "keyvaults" | "public_ips" | "all";
           locations?: string;
+          format?: string;
         };
 
         const targetLocations = resolveLocations(locations || "common");
@@ -1821,14 +2305,15 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
 
         return {
-          content: [{ type: "text", text: output }],
+          content: [{ type: "text", text: formatResponse(output, format, request.params.name) }],
         };
       }
 
-      case "enumerate_resource_groups": {
-        const { subscriptionId, location } = request.params.arguments as {
+      case "azure_enumerate_resource_groups": {
+        const { subscriptionId, location, format } = request.params.arguments as {
           subscriptionId: string;
           location?: string;
+          format?: string;
         };
 
         const client = new ResourceManagementClient(credential, subscriptionId);
@@ -1854,16 +2339,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         output += `:\n\n${JSON.stringify(filtered, null, 2)}`;
 
         return {
-          content: [{ type: "text", text: output }],
+          content: [{ type: "text", text: formatResponse(output, format, request.params.name) }],
         };
       }
 
-      case "enumerate_resources": {
-        const { subscriptionId, resourceGroup, resourceType, location } = request.params.arguments as {
+      case "azure_enumerate_resources": {
+        const { subscriptionId, resourceGroup, resourceType, location, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
           resourceType?: string;
           location?: string;
+          format?: string;
         };
 
         const client = new ResourceManagementClient(credential, subscriptionId);
@@ -1912,17 +2398,18 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         output += `\n\n## Summary by Type:\n${JSON.stringify(summary, null, 2)}\n\n## Resources:\n${JSON.stringify(filtered, null, 2)}`;
 
         return {
-          content: [{ type: "text", text: output }],
+          content: [{ type: "text", text: formatResponse(output, format, request.params.name) }],
         };
       }
 
-      case "get_resource_details": {
-        const { subscriptionId, resourceGroup, resourceProvider, resourceType, resourceName } = request.params.arguments as {
+      case "azure_get_resource_details": {
+        const { subscriptionId, resourceGroup, resourceProvider, resourceType, resourceName, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup: string;
           resourceProvider: string;
           resourceType: string;
           resourceName: string;
+          format?: string;
         };
 
         const client = new ResourceManagementClient(credential, subscriptionId);
@@ -1954,16 +2441,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: `# Resource Details\n\n${JSON.stringify(resource, null, 2)}`,
+              text: formatResponse(`# Resource Details\n\n${JSON.stringify(resource, null, 2)}`, format, request.params.name),
             },
           ],
         };
       }
 
-      case "analyze_storage_security": {
-        const { subscriptionId, resourceGroup } = request.params.arguments as {
+      case "azure_analyze_storage_security": {
+        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          format?: string;
         };
 
         const storageClient = new StorageManagementClient(credential, subscriptionId);
@@ -2096,17 +2584,18 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: `# Storage Security Analysis\n\n## Summary\n- Total Storage Accounts: ${storageAccounts.length}\n- CRITICAL Risk: ${criticalCount}\n- HIGH Risk: ${highCount}\n- MEDIUM Risk: ${mediumCount}\n- LOW Risk: ${storageAccounts.length - criticalCount - highCount - mediumCount}\n\n## Detailed Findings\n\n${JSON.stringify(storageAccounts, null, 2)}`,
+              text: formatResponse(`# Storage Security Analysis\n\n## Summary\n- Total Storage Accounts: ${storageAccounts.length}\n- CRITICAL Risk: ${criticalCount}\n- HIGH Risk: ${highCount}\n- MEDIUM Risk: ${mediumCount}\n- LOW Risk: ${storageAccounts.length - criticalCount - highCount - mediumCount}\n\n## Detailed Findings\n\n${JSON.stringify(storageAccounts, null, 2)}`, format, request.params.name),
             },
           ],
         };
       }
 
-      case "analyze_nsg_rules": {
-        const { subscriptionId, resourceGroup, nsgName } = request.params.arguments as {
+      case "azure_analyze_nsg_rules": {
+        const { subscriptionId, resourceGroup, nsgName, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
           nsgName?: string;
+          format?: string;
         };
 
         const networkClient = new NetworkManagementClient(credential, subscriptionId);
@@ -2250,16 +2739,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: `# NSG Security Analysis\n\n## Summary\n- Total NSGs: ${nsgAnalysis.length}\n- CRITICAL Risk: ${criticalCount}\n- HIGH Risk: ${highCount}\n- MEDIUM Risk: ${nsgAnalysis.filter(n => n.riskLevel === "MEDIUM").length}\n- LOW Risk: ${nsgAnalysis.filter(n => n.riskLevel === "LOW").length}\n\n## Detailed Findings\n\n${JSON.stringify(nsgAnalysis, null, 2)}`,
+              text: formatResponse(`# NSG Security Analysis\n\n## Summary\n- Total NSGs: ${nsgAnalysis.length}\n- CRITICAL Risk: ${criticalCount}\n- HIGH Risk: ${highCount}\n- MEDIUM Risk: ${nsgAnalysis.filter(n => n.riskLevel === "MEDIUM").length}\n- LOW Risk: ${nsgAnalysis.filter(n => n.riskLevel === "LOW").length}\n\n## Detailed Findings\n\n${JSON.stringify(nsgAnalysis, null, 2)}`, format, request.params.name),
             },
           ],
         };
       }
 
-      case "enumerate_public_ips": {
-        const { subscriptionId, resourceGroup } = request.params.arguments as {
+      case "azure_enumerate_public_ips": {
+        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          format?: string;
         };
 
         const networkClient = new NetworkManagementClient(credential, subscriptionId);
@@ -2316,16 +2806,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: `# Public IP Addresses\n\n## Attack Surface Summary\n- Total Public IPs: ${publicIps.length}\n- Allocated: ${publicIps.filter(ip => ip.ipAddress !== "Not allocated").length}\n- With DNS Names: ${publicIps.filter(ip => ip.dnsName !== "None").length}\n- Attached to Resources: ${publicIps.filter(ip => ip.attachedTo).length}\n- Unattached (Orphaned): ${publicIps.filter(ip => !ip.attachedTo).length}\n\n## Public IPs\n\n${JSON.stringify(publicIps, null, 2)}`,
+              text: formatResponse(`# Public IP Addresses\n\n## Attack Surface Summary\n- Total Public IPs: ${publicIps.length}\n- Allocated: ${publicIps.filter(ip => ip.ipAddress !== "Not allocated").length}\n- With DNS Names: ${publicIps.filter(ip => ip.dnsName !== "None").length}\n- Attached to Resources: ${publicIps.filter(ip => ip.attachedTo).length}\n- Unattached (Orphaned): ${publicIps.filter(ip => !ip.attachedTo).length}\n\n## Public IPs\n\n${JSON.stringify(publicIps, null, 2)}`, format, request.params.name),
             },
           ],
         };
       }
 
-      case "enumerate_rbac_assignments": {
-        const { subscriptionId, scope } = request.params.arguments as {
+      case "azure_enumerate_rbac_assignments": {
+        const { subscriptionId, scope, format } = request.params.arguments as {
           subscriptionId: string;
           scope?: string;
+          format?: string;
         };
 
         const authClient = new AuthorizationManagementClient(credential, subscriptionId);
@@ -2382,16 +2873,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: `# RBAC Role Assignments\n\n## Summary\n- Total Assignments: ${assignments.length}\n- Privileged Roles (Owner/Contributor/UAA): ${privilegedCount}\n- Service Principals: ${servicePrincipalCount}\n- Groups: ${groupCount}\n- Users: ${assignments.filter(a => a.principalType === "User").length}\n\n## Scope: ${targetScope}\n\n## Role Assignments\n\n${JSON.stringify(assignments, null, 2)}`,
+              text: formatResponse(`# RBAC Role Assignments\n\n## Summary\n- Total Assignments: ${assignments.length}\n- Privileged Roles (Owner/Contributor/UAA): ${privilegedCount}\n- Service Principals: ${servicePrincipalCount}\n- Groups: ${groupCount}\n- Users: ${assignments.filter(a => a.principalType === "User").length}\n\n## Scope: ${targetScope}\n\n## Role Assignments\n\n${JSON.stringify(assignments, null, 2)}`, format, request.params.name),
             },
           ],
         };
       }
 
-      case "scan_sql_databases": {
-        const { subscriptionId, resourceGroup } = request.params.arguments as {
+      case "azure_scan_sql_databases": {
+        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          format?: string;
         };
 
         const sqlClient = new SqlManagementClient(credential, subscriptionId);
@@ -2498,16 +2990,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: `# SQL Database Security Analysis\n\n## Summary\n- Total SQL Servers: ${sqlServers.length}\n- CRITICAL Risk: ${sqlServers.filter(s => s.riskLevel === "CRITICAL").length}\n- HIGH Risk: ${sqlServers.filter(s => s.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${sqlServers.filter(s => s.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(sqlServers, null, 2)}`,
+              text: formatResponse(`# SQL Database Security Analysis\n\n## Summary\n- Total SQL Servers: ${sqlServers.length}\n- CRITICAL Risk: ${sqlServers.filter(s => s.riskLevel === "CRITICAL").length}\n- HIGH Risk: ${sqlServers.filter(s => s.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${sqlServers.filter(s => s.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(sqlServers, null, 2)}`, format, request.params.name),
             },
           ],
         };
       }
 
-      case "analyze_keyvault_security": {
-        const { subscriptionId, resourceGroup } = request.params.arguments as {
+      case "azure_analyze_keyvault_security": {
+        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          format?: string;
         };
 
         const kvClient = new KeyVaultManagementClient(credential, subscriptionId);
@@ -2589,16 +3082,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: `# Key Vault Security Analysis\n\n## Summary\n- Total Key Vaults: ${keyVaults.length}\n- CRITICAL Risk: ${keyVaults.filter(k => k.riskLevel === "CRITICAL").length}\n- HIGH Risk: ${keyVaults.filter(k => k.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${keyVaults.filter(k => k.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(keyVaults, null, 2)}`,
+              text: formatResponse(`# Key Vault Security Analysis\n\n## Summary\n- Total Key Vaults: ${keyVaults.length}\n- CRITICAL Risk: ${keyVaults.filter(k => k.riskLevel === "CRITICAL").length}\n- HIGH Risk: ${keyVaults.filter(k => k.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${keyVaults.filter(k => k.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(keyVaults, null, 2)}`, format, request.params.name),
             },
           ],
         };
       }
 
-      case "analyze_cosmosdb_security": {
-        const { subscriptionId, resourceGroup } = request.params.arguments as {
+      case "azure_analyze_cosmosdb_security": {
+        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          format?: string;
         };
 
         const cosmosClient = new CosmosDBManagementClient(credential, subscriptionId);
@@ -2667,16 +3161,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: `# Cosmos DB Security Analysis\n\n## Summary\n- Total Cosmos DB Accounts: ${cosmosAccounts.length}\n- HIGH Risk: ${cosmosAccounts.filter(c => c.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${cosmosAccounts.filter(c => c.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(cosmosAccounts, null, 2)}`,
+              text: formatResponse(`# Cosmos DB Security Analysis\n\n## Summary\n- Total Cosmos DB Accounts: ${cosmosAccounts.length}\n- HIGH Risk: ${cosmosAccounts.filter(c => c.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${cosmosAccounts.filter(c => c.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(cosmosAccounts, null, 2)}`, format, request.params.name),
             },
           ],
         };
       }
 
-      case "analyze_vm_security": {
-        const { subscriptionId, resourceGroup } = request.params.arguments as {
+      case "azure_analyze_vm_security": {
+        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          format?: string;
         };
 
         const computeClient = new ComputeManagementClient(credential, subscriptionId);
@@ -2763,16 +3258,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: `# Virtual Machine Security Analysis\n\n## Summary\n- Total VMs: ${vms.length}\n- CRITICAL Risk: ${vms.filter(v => v.riskLevel === "CRITICAL").length}\n- HIGH Risk: ${vms.filter(v => v.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${vms.filter(v => v.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(vms, null, 2)}`,
+              text: formatResponse(`# Virtual Machine Security Analysis\n\n## Summary\n- Total VMs: ${vms.length}\n- CRITICAL Risk: ${vms.filter(v => v.riskLevel === "CRITICAL").length}\n- HIGH Risk: ${vms.filter(v => v.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${vms.filter(v => v.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(vms, null, 2)}`, format, request.params.name),
             },
           ],
         };
       }
 
-      case "scan_acr_security": {
-        const { subscriptionId, resourceGroup } = request.params.arguments as {
+      case "azure_scan_acr_security": {
+        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          format?: string;
         };
 
         const acrClient = new ContainerRegistryManagementClient(credential, subscriptionId);
@@ -2842,15 +3338,16 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: `# Container Registry Security Analysis\n\n## Summary\n- Total ACRs: ${registries.length}\n- CRITICAL Risk: ${registries.filter(r => r.riskLevel === "CRITICAL").length}\n- HIGH Risk: ${registries.filter(r => r.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${registries.filter(r => r.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(registries, null, 2)}`,
+              text: formatResponse(`# Container Registry Security Analysis\n\n## Summary\n- Total ACRs: ${registries.length}\n- CRITICAL Risk: ${registries.filter(r => r.riskLevel === "CRITICAL").length}\n- HIGH Risk: ${registries.filter(r => r.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${registries.filter(r => r.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(registries, null, 2)}`, format, request.params.name),
             },
           ],
         };
       }
 
-      case "enumerate_service_principals": {
-        const { subscriptionId } = request.params.arguments as {
+      case "azure_enumerate_service_principals": {
+        const { subscriptionId, format } = request.params.arguments as {
           subscriptionId: string;
+          format?: string;
         };
 
         // Note: Service principals are tenant-level, requires Microsoft Graph API
@@ -2861,16 +3358,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: message,
+              text: formatResponse(message, format, request.params.name),
             },
           ],
         };
       }
 
-      case "enumerate_managed_identities": {
-        const { subscriptionId, resourceGroup } = request.params.arguments as {
+      case "azure_enumerate_managed_identities": {
+        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          format?: string;
         };
 
         const resourceClient = new ResourceManagementClient(credential, subscriptionId);
@@ -2915,18 +3413,19 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: `# Managed Identity Enumeration\n\n## Summary\n- User-Assigned Identities: ${identities.length}\n- Resources with System-Assigned Identity: ${resourcesWithIdentity.length}\n\n## User-Assigned Identities\n\n${JSON.stringify(identities, null, 2)}\n\n## Resources with System-Assigned Identity\n\n${JSON.stringify(resourcesWithIdentity, null, 2)}`,
+              text: formatResponse(`# Managed Identity Enumeration\n\n## Summary\n- User-Assigned Identities: ${identities.length}\n- Resources with System-Assigned Identity: ${resourcesWithIdentity.length}\n\n## User-Assigned Identities\n\n${JSON.stringify(identities, null, 2)}\n\n## Resources with System-Assigned Identity\n\n${JSON.stringify(resourcesWithIdentity, null, 2)}`, format, request.params.name),
             },
           ],
         };
       }
 
-      case "scan_storage_containers": {
-        const { subscriptionId, resourceGroup, storageAccountName, maxBlobsPerContainer } = request.params.arguments as {
+      case "azure_scan_storage_containers": {
+        const { subscriptionId, resourceGroup, storageAccountName, maxBlobsPerContainer, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
           storageAccountName?: string;
           maxBlobsPerContainer?: number;
+          format?: string;
         };
 
         const maxBlobs = maxBlobsPerContainer || 100;
@@ -3135,13 +3634,13 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           content: [
             {
               type: "text",
-              text: `# Storage Container & Blob Deep Scan\n\n## Summary\n- Storage Accounts Scanned: ${summary.totalAccountsScanned}\n- CRITICAL Risk: ${summary.criticalRisk}\n- HIGH Risk: ${summary.highRisk}\n- Total Sensitive Files Found: ${summary.totalSensitiveFiles}\n- Public Containers: ${summary.publicContainers}\n\n## Detailed Findings\n\n${JSON.stringify(scanResults, null, 2)}`,
+              text: formatResponse(`# Storage Container & Blob Deep Scan\n\n## Summary\n- Storage Accounts Scanned: ${summary.totalAccountsScanned}\n- CRITICAL Risk: ${summary.criticalRisk}\n- HIGH Risk: ${summary.highRisk}\n- Total Sensitive Files Found: ${summary.totalSensitiveFiles}\n- Public Containers: ${summary.publicContainers}\n\n## Detailed Findings\n\n${JSON.stringify(scanResults, null, 2)}`, format, request.params.name),
             },
           ],
         };
       }
 
-      case "generate_security_report": {
+      case "azure_generate_security_report": {
         const { subscriptionId, resourceGroup, format, includeRemediation, includeCompliance } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
@@ -3546,11 +4045,12 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         };
       }
 
-      case "analyze_attack_paths": {
-        const { subscriptionId, resourceGroup, startFrom } = request.params.arguments as {
+      case "azure_analyze_attack_paths": {
+        const { subscriptionId, resourceGroup, startFrom, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
           startFrom?: string;
+          format?: string;
         };
 
         const startPoint = startFrom || "all";
@@ -3775,16 +4275,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         report += `*Generated by Stratos v1.8.0*\n`;
 
         return {
-          content: [{ type: "text", text: report }],
+          content: [{ type: "text", text: formatResponse(report, format, request.params.name) }],
         };
       }
 
-      case "get_aks_credentials": {
-        const { subscriptionId, resourceGroup, clusterName, adminAccess } = request.params.arguments as {
+      case "azure_get_aks_credentials": {
+        const { subscriptionId, resourceGroup, clusterName, adminAccess, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup: string;
           clusterName: string;
           adminAccess?: boolean;
+          format?: string;
         };
 
         const containerClient = new ContainerServiceClient(credential, subscriptionId);
@@ -3915,7 +4416,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           }
 
           return {
-            content: [{ type: "text", text: report }],
+            content: [{ type: "text", text: formatResponse(report, format, request.params.name) }],
           };
         } catch (error: any) {
           return {
@@ -3928,12 +4429,13 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      case "scan_azure_devops": {
-        const { organizationUrl, personalAccessToken, scanRepositories, scanPipelines } = request.params.arguments as {
+      case "azure_scan_azure_devops": {
+        const { organizationUrl, personalAccessToken, scanRepositories, scanPipelines, format } = request.params.arguments as {
           organizationUrl: string;
           personalAccessToken: string;
           scanRepositories?: boolean;
           scanPipelines?: boolean;
+          format?: string;
         };
 
         const doScanRepos = scanRepositories !== false;
@@ -4152,7 +4654,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           report += `- **GitHub Advanced Security:** Secret scanning integration\n\n`;
 
           return {
-            content: [{ type: 'text', text: report }],
+            content: [{ type: 'text', text: formatResponse(report, format, request.params.name) }],
           };
         } catch (error: any) {
           return {
@@ -4168,10 +4670,11 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
       }
 
       // ========== NEW SECURITY TOOLS ==========
-      case "analyze_function_apps": {
-        const { subscriptionId, resourceGroup } = request.params.arguments as {
+      case "azure_analyze_function_apps": {
+        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          format?: string;
         };
         
         try {
@@ -4214,7 +4717,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           report += `| Environment Variable Leak | MEDIUM | Secrets in app settings visible to anyone with access |\n`;
           
           return {
-            content: [{ type: 'text', text: report }],
+            content: [{ type: 'text', text: formatResponse(report, format, request.params.name) }],
           };
         } catch (error: any) {
           return {
@@ -4224,10 +4727,11 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      case "analyze_app_service_security": {
-        const { subscriptionId, resourceGroup } = request.params.arguments as {
+      case "azure_analyze_app_service_security": {
+        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          format?: string;
         };
         
         try {
@@ -4269,7 +4773,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           report += `| No IP Restrictions | MEDIUM | Open to all internet traffic |\n`;
           
           return {
-            content: [{ type: 'text', text: report }],
+            content: [{ type: 'text', text: formatResponse(report, format, request.params.name) }],
           };
         } catch (error: any) {
           return {
@@ -4279,10 +4783,11 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      case "analyze_firewall_policies": {
-        const { subscriptionId, resourceGroup } = request.params.arguments as {
+      case "azure_analyze_firewall_policies": {
+        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          format?: string;
         };
         
         try {
@@ -4353,7 +4858,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           report += `- Use Azure DDoS Protection Standard for public endpoints\n`;
           
           return {
-            content: [{ type: 'text', text: report }],
+            content: [{ type: 'text', text: formatResponse(report, format, request.params.name) }],
           };
         } catch (error: any) {
           return {
@@ -4363,10 +4868,11 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      case "analyze_logic_apps": {
-        const { subscriptionId, resourceGroup } = request.params.arguments as {
+      case "azure_analyze_logic_apps": {
+        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          format?: string;
         };
         
         try {
@@ -4400,7 +4906,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           report += `| Run history exposure | MEDIUM | Configure retention and access |\n`;
           
           return {
-            content: [{ type: 'text', text: report }],
+            content: [{ type: 'text', text: formatResponse(report, format, request.params.name) }],
           };
         } catch (error: any) {
           return {
@@ -4410,10 +4916,11 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      case "analyze_rbac_privesc": {
-        const { subscriptionId, targetPrincipal } = request.params.arguments as {
+      case "azure_analyze_rbac_privesc": {
+        const { subscriptionId, targetPrincipal, format } = request.params.arguments as {
           subscriptionId: string;
           targetPrincipal?: string;
+          format?: string;
         };
         
         try {
@@ -4470,7 +4977,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           report += `| Key Vault Access | keyVault/vaults/accessPolicies/write | Access secrets |\n`;
           
           return {
-            content: [{ type: 'text', text: report }],
+            content: [{ type: 'text', text: formatResponse(report, format, request.params.name) }],
           };
         } catch (error: any) {
           return {
@@ -4480,9 +4987,10 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      case "detect_persistence_mechanisms": {
-        const { subscriptionId } = request.params.arguments as {
+      case "azure_detect_persistence_mechanisms": {
+        const { subscriptionId, format } = request.params.arguments as {
           subscriptionId: string;
+          format?: string;
         };
         
         try {
@@ -4533,7 +5041,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           report += `\`\`\`\n`;
           
           return {
-            content: [{ type: 'text', text: report }],
+            content: [{ type: 'text', text: formatResponse(report, format, request.params.name) }],
           };
         } catch (error: any) {
           return {
@@ -4543,11 +5051,12 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      case "scan_aks_full": {
-        const { subscriptionId, resourceGroup, clusterName } = request.params.arguments as {
+      case "azure_scan_aks_full": {
+        const { subscriptionId, resourceGroup, clusterName, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup: string;
           clusterName: string;
+          format?: string;
         };
 
         try {
@@ -5279,7 +5788,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           output += `*Reference: https://cloud.hacktricks.wiki/en/pentesting-cloud/azure-security/az-services/az-aks*\n`;
 
           return {
-            content: [{ type: 'text', text: output }],
+            content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }],
           };
         } catch (error: any) {
           return {
@@ -5289,12 +5798,13 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      case "scan_aks_live": {
-        const { subscriptionId, resourceGroup, clusterName, namespace } = request.params.arguments as {
+      case "azure_scan_aks_live": {
+        const { subscriptionId, resourceGroup, clusterName, namespace, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup: string;
           clusterName: string;
           namespace?: string;
+          format?: string;
         };
 
         try {
@@ -6525,7 +7035,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           }
 
           return {
-            content: [{ type: 'text', text: output }],
+            content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }],
           };
         } catch (error: any) {
           return {
@@ -6535,14 +7045,15 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      case "scan_aks_imds": {
-        const { subscriptionId, resourceGroup, clusterName, namespace, exportTokens = false, deepDataPlane = false } = request.params.arguments as {
+      case "azure_scan_aks_imds": {
+        const { subscriptionId, resourceGroup, clusterName, namespace, exportTokens = false, deepDataPlane = false, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup: string;
           clusterName: string;
           namespace?: string;
           exportTokens?: boolean;
           deepDataPlane?: boolean;
+          format?: string;
         };
 
         try {
@@ -6667,7 +7178,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             if (runningPods.length === 0) {
               output += `❌ No running pods found to test IMDS access\n\n`;
               try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
-              return { content: [{ type: 'text', text: output }] };
+              return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
             }
             
             // Limit scan to first 30 pods for performance
@@ -6739,7 +7250,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
               
               // Cleanup and return
               try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
-              return { content: [{ type: 'text', text: output }] };
+              return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
             }
             
             findings.push({
@@ -6753,7 +7264,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           } catch (e: any) {
             output += `❌ Failed to enumerate pods: ${e.message}\n\n`;
             try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
-            return { content: [{ type: 'text', text: output }] };
+            return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
           }
 
           // ========== PHASE 2: SELECT VULNERABLE POD FOR EXPLOITATION ==========
@@ -6840,7 +7351,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           if (stolenTokens.length === 0) {
             output += `⚠️ No tokens could be stolen - identity may not be configured\n\n`;
             try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
-            return { content: [{ type: 'text', text: output }] };
+            return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
           }
 
           // ========== TOKEN EXPORT (Optional) ==========
@@ -6884,7 +7395,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           if (!armToken) {
             output += `⚠️ No ARM token obtained - cannot enumerate Azure resources\n\n`;
             try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
-            return { content: [{ type: 'text', text: output }] };
+            return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
           }
 
           // ========== PHASE 3: ENUMERATE TOKEN PERMISSIONS ==========
@@ -7170,7 +7681,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
 
           return {
-            content: [{ type: 'text', text: output }],
+            content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }],
           };
         } catch (error: any) {
           return {
@@ -7181,14 +7692,31 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
       }
 
       default:
-        throw new Error(`Unknown tool: ${request.params.name}`);
+        performanceTracker.end(trackingId, false, 'UNKNOWN_TOOL');
+        logger.warn(`Unknown tool requested: ${name}`, { tool: name }, name);
+        throw new ValidationError(`Unknown tool: ${name}`, { tool: name });
     }
   } catch (error) {
+    // End performance tracking with failure
+    performanceTracker.end(trackingId, false, error instanceof Error ? error.name : 'UnknownError');
+    
+    // Normalize error to structured format
+    const structured = normalizeError(error);
+    
+    // Log error with PII redaction
+    logger.error(`Tool execution failed: ${name}`, structured.toJSON(), name);
+    
+    // Return formatted error response
+    const format = args?.format === 'json' ? 'json' : 'markdown';
+    const errorOutput = format === 'json' 
+      ? formatErrorJSON(structured)
+      : formatErrorMarkdown(structured);
+    
     return {
       content: [
         {
           type: "text",
-          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          text: errorOutput,
         },
       ],
       isError: true,
