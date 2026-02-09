@@ -14,6 +14,14 @@
   },
   "author": "h4cd0c",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/h4cd0c/stratos-mcp"
+  },
+  "homepage": "https://github.com/h4cd0c/stratos-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/h4cd0c/stratos-mcp/issues"
+  },
   "dependencies": {
     "@azure/arm-authorization": "^9.0.0",
     "@azure/arm-compute": "^23.2.0",
