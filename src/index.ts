@@ -32,12 +32,24 @@ import { logger, performanceTracker } from "./logging.js";
 import { normalizeError, MCPError, ValidationError, formatErrorMarkdown, formatErrorJSON } from "./errors.js";
 import { retry, retryWithTimeout } from "./retry.js";
 
+// Performance Optimization Infrastructure (v1.10.8)
+import { LRUCache, CacheKeyBuilder, CacheTTL } from "./cache.js";
+import { executeParallel, executeBatched, paginateAll, memoizeAsync } from "./performance.js";
+
 // Initialize Azure credential - PRIORITIZE Azure CLI over VS Code extension
 // This fixes the issue where VS Code's internal service principal is used instead of user's az login
 const credential = new ChainedTokenCredential(
   new AzureCliCredential(),      // Try Azure CLI first (your az login)
   new DefaultAzureCredential()   // Fallback to other methods
 );
+
+// Initialize Azure cache instance
+const azureCache = new LRUCache({
+  defaultTTL: 5 * 60 * 1000, // 5 minutes
+  maxEntries: 1000,
+  maxMemoryMB: 100,
+  enableStats: true,
+});
 
 // ========== AZURE LOCATIONS ==========
 // All Azure regions/locations
@@ -313,6 +325,50 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           readOnly: true,
           destructive: false,
           idempotent: true,
+          openWorld: false
+        }
+      },
+      {
+        name: "azure_cache_stats",
+        description: "View cache statistics: hit/miss ratio, cached keys, memory usage. Useful for monitoring performance.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
+          },
+        },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: false
+        }
+      },
+      {
+        name: "azure_cache_clear",
+        description: "Clear cached data. Use after making Azure changes to get fresh results. Can clear all or specific pattern.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pattern: {
+              type: "string",
+              description: "Optional: Clear only keys matching this pattern (e.g., 'storage', 'network', 'eastus'). If omitted, clears all.",
+            },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
+          },
+        },
+        annotations: {
+          readOnly: false,
+          destructive: true,
+          idempotent: false,
           openWorld: false
         }
       },
@@ -2143,6 +2199,55 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             },
           ],
         };
+      }
+
+      case "azure_cache_stats": {
+        const { format } = request.params.arguments as { format?: string };
+        const stats = azureCache.getStats();
+        const result = format === 'json' ? JSON.stringify(stats, null, 2) : 
+          `# Cache Statistics\n\n` +
+          `**Hit Rate:** ${stats.hitRate}%\n` +
+          `**Total Hits:** ${stats.hits}\n` +
+          `**Total Misses:** ${stats.misses}\n` +
+          `**Cache Entries:** ${stats.totalEntries}\n` +
+          `**Memory Usage:** ${stats.memoryUsageMB.toFixed(2)} MB\n` +
+          `**Evictions:** ${stats.evictions}\n\n` +
+          `Cache is ${stats.hitRate > 50 ? 'performing well' : 'warming up'}. ` +
+          `Hit rate indicates ${stats.hitRate}% of requests served from cache.`;
+        performanceTracker.end(trackingId, true);
+        logger.info(`Tool completed successfully: azure_cache_stats`, { stats }, 'azure_cache_stats');
+        return { content: [{ type: "text", text: result }] };
+      }
+
+      case "azure_cache_clear": {
+        const { pattern, format } = request.params.arguments as { pattern?: string; format?: string };
+        
+        let clearedCount = 0;
+        if (pattern) {
+          // Clear keys matching pattern
+          const allKeys = azureCache.keys();
+          for (const key of allKeys) {
+            if (key.includes(pattern)) {
+              azureCache.delete(key);
+              clearedCount++;
+            }
+          }
+        } else {
+          // Clear all
+          clearedCount = azureCache.size();
+          azureCache.clear();
+        }
+        
+        const result = format === 'json' ? 
+          JSON.stringify({ cleared: clearedCount, pattern: pattern || 'all' }, null, 2) :
+          `# Cache Cleared\n\n` +
+          `**Pattern:** ${pattern || 'all (entire cache)'}\n` +
+          `**Entries Cleared:** ${clearedCount}\n\n` +
+          `Cache has been cleared. Next API calls will fetch fresh data.`;
+        
+        performanceTracker.end(trackingId, true);
+        logger.info(`Cache cleared: azure_cache_clear`, { pattern, clearedCount }, 'azure_cache_clear');
+        return { content: [{ type: "text", text: result }] };
       }
 
       case "azure_list_active_locations": {
