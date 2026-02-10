@@ -166,16 +166,32 @@
 
 ## 🚀 Quick Start
 
+### Installation
+
+**Option 1: Install from npm (Recommended)**
+
+```bash
+# Install globally from npm
+npm install -g stratos-mcp
+```
+
+**Option 2: Build from source**
+
+```bash
+# Clone the repository
+git clone https://github.com/h4cd0c/stratos-mcp.git
+cd stratos-mcp
+
+# Install dependencies
+npm install
+npm run build
+```
+
 ### Prerequisites
 
 ```powershell
 # Login to Azure CLI
 az login
-
-# Install dependencies
-cd stratos-mcp
-npm install
-npm run build
 ```
 
 ### VS Code Configuration
