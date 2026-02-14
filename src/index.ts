@@ -5816,35 +5816,65 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           const tempKubeconfig = path.join(os.tmpdir(), `stratos-kubeconfig-${Date.now()}.yaml`);
           await fs.writeFile(tempKubeconfig, kubeconfig);
           
-          // Validate Azure CLI session before running kubectl
+          // Validate Azure CLI session and token before running kubectl
           output += `**Validating Azure CLI session...**\n`;
           try {
             const { exec } = await import('child_process');
+            // First check if account is configured
             await new Promise<void>((resolve, reject) => {
               exec('az account show', { timeout: 5000 }, (error, stdout, stderr) => {
                 if (error) {
-                  reject(new Error('Azure CLI session expired or not authenticated'));
+                  reject(new Error('Azure CLI not authenticated'));
                 } else {
                   resolve();
                 }
               });
             });
-            output += `✅ Azure CLI session valid\n\n`;
+            
+            // Then validate token is still valid by attempting to get access token
+            await new Promise<void>((resolve, reject) => {
+              exec('az account get-access-token --resource https://management.azure.com/', { timeout: 10000 }, (error, stdout, stderr) => {
+                if (error) {
+                  // Check if it's a token expiration issue
+                  if (stderr.includes('expired') || stderr.includes('refresh') || stderr.includes('AADSTS')) {
+                    reject(new Error('Azure CLI token expired - please run: az login'));
+                  } else {
+                    reject(new Error('Azure CLI token validation failed'));
+                  }
+                } else {
+                  try {
+                    const tokenData = JSON.parse(stdout);
+                    if (!tokenData.accessToken) {
+                      reject(new Error('No valid access token available'));
+                    } else {
+                      resolve();
+                    }
+                  } catch (e) {
+                    reject(new Error('Invalid token response'));
+                  }
+                }
+              });
+            });
+            output += `✅ Azure CLI session and token valid\n\n`;
           } catch (azError: any) {
             try { await fs.unlink(tempKubeconfig); } catch (e) {}
             return {
               content: [{
                 type: 'text',
                 text: `# ❌ Azure CLI Authentication Required\n\n` +
-                  `The Azure CLI session has expired or is not authenticated.\n\n` +
+                  `The Azure CLI session has expired or token is invalid.\n\n` +
                   `**Error:** ${azError.message}\n\n` +
                   `## 🔧 Fix\n\n` +
-                  `Run the following command to authenticate:\n\n` +
+                  `Run the following command to re-authenticate:\n\n` +
                   `\`\`\`bash\n` +
                   `az login\n` +
                   `\`\`\`\n\n` +
+                  `**Common Causes:**\n` +
+                  `- Token expired (Azure CLI tokens expire after some time)\n` +
+                  `- Session not refreshed (run \`az login\` periodically)\n` +
+                  `- Multi-tenant issues (use \`az login --tenant <tenant-id>\`)\n\n` +
                   `Then try the scan again.\n\n` +
-                  `**Note:** This tool requires Azure CLI authentication because it uses \`kubectl\` with Azure CLI-based kubeconfig.`
+                  `**Note:** This tool requires valid Azure CLI authentication for kubectl operations.`
               }],
               isError: true,
             };
@@ -5867,7 +5897,15 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                     if (error.killed || error.signal === 'SIGTERM') {
                       reject(new Error(`kubectl timed out after ${KUBECTL_TIMEOUT_MS/1000}s`));
                     } else {
-                      reject(new Error(stderr || error.message));
+                      // Check for authentication-related errors
+                      const errorMsg = (stderr || error.message).toLowerCase();
+                      if (errorMsg.includes('unauthorized') || errorMsg.includes('authentication') || 
+                          errorMsg.includes('token') || errorMsg.includes('expired') ||
+                          errorMsg.includes('aadsts') || errorMsg.includes('credentials')) {
+                        reject(new Error(`Authentication failed - Azure CLI token may have expired. Run 'az login' and retry. Details: ${stderr || error.message}`));
+                      } else {
+                        reject(new Error(stderr || error.message));
+                      }
                     }
                   } else {
                     resolve(stdout);
@@ -7084,35 +7122,65 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           const tempKubeconfig = pathMod.join(os.tmpdir(), `stratos-imds-${Date.now()}.yaml`);
           await fsMod.writeFile(tempKubeconfig, kubeconfig);
           
-          // Validate Azure CLI session before running kubectl
+          // Validate Azure CLI session and token before running kubectl
           output += `**Validating Azure CLI session...**\n`;
           try {
             const { exec } = await import('child_process');
+            // First check if account is configured
             await new Promise<void>((resolve, reject) => {
               exec('az account show', { timeout: 5000 }, (error, stdout, stderr) => {
                 if (error) {
-                  reject(new Error('Azure CLI session expired or not authenticated'));
+                  reject(new Error('Azure CLI not authenticated'));
                 } else {
                   resolve();
                 }
               });
             });
-            output += `✅ Azure CLI session valid\n\n`;
+            
+            // Then validate token is still valid by attempting to get access token
+            await new Promise<void>((resolve, reject) => {
+              exec('az account get-access-token --resource https://management.azure.com/', { timeout: 10000 }, (error, stdout, stderr) => {
+                if (error) {
+                  // Check if it's a token expiration issue
+                  if (stderr.includes('expired') || stderr.includes('refresh') || stderr.includes('AADSTS')) {
+                    reject(new Error('Azure CLI token expired - please run: az login'));
+                  } else {
+                    reject(new Error('Azure CLI token validation failed'));
+                  }
+                } else {
+                  try {
+                    const tokenData = JSON.parse(stdout);
+                    if (!tokenData.accessToken) {
+                      reject(new Error('No valid access token available'));
+                    } else {
+                      resolve();
+                    }
+                  } catch (e) {
+                    reject(new Error('Invalid token response'));
+                  }
+                }
+              });
+            });
+            output += `✅ Azure CLI session and token valid\n\n`;
           } catch (azError: any) {
             try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
             return {
               content: [{
                 type: 'text',
                 text: `# ❌ Azure CLI Authentication Required\n\n` +
-                  `The Azure CLI session has expired or is not authenticated.\n\n` +
+                  `The Azure CLI session has expired or token is invalid.\n\n` +
                   `**Error:** ${azError.message}\n\n` +
                   `## 🔧 Fix\n\n` +
-                  `Run the following command to authenticate:\n\n` +
+                  `Run the following command to re-authenticate:\n\n` +
                   `\`\`\`bash\n` +
                   `az login\n` +
                   `\`\`\`\n\n` +
+                  `**Common Causes:**\n` +
+                  `- Token expired (Azure CLI tokens expire after some time)\n` +
+                  `- Session not refreshed (run \`az login\` periodically)\n` +
+                  `- Multi-tenant issues (use \`az login --tenant <tenant-id>\`)\n\n` +
                   `Then try the scan again.\n\n` +
-                  `**Note:** This tool requires Azure CLI authentication because it uses \`kubectl\` with Azure CLI-based kubeconfig.`
+                  `**Note:** This tool requires valid Azure CLI authentication for kubectl operations.`
               }],
               isError: true,
             };
@@ -7131,7 +7199,15 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
                 (error, stdout, stderr) => {
                   if (killed) return;
                   if (error) {
-                    reject(new Error(stderr || error.message));
+                    // Check for authentication-related errors
+                    const errorMsg = (stderr || error.message).toLowerCase();
+                    if (errorMsg.includes('unauthorized') || errorMsg.includes('authentication') || 
+                        errorMsg.includes('token') || errorMsg.includes('expired') ||
+                        errorMsg.includes('aadsts') || errorMsg.includes('credentials')) {
+                      reject(new Error(`Authentication failed - Azure CLI token may have expired. Run 'az login' and retry. Details: ${stderr || error.message}`));
+                    } else {
+                      reject(new Error(stderr || error.message));
+                    }
                   } else {
                     resolve(stdout);
                   }

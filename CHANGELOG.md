@@ -16,12 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Same comprehensive output, significantly faster performance
 
 ### Fixed 🔧
-- **Azure CLI Authentication Validation** - Prevents cryptic kubectl errors
-  - Added proactive Azure CLI session validation to `scan_aks_live` and `scan_aks_imds`
-  - Validates `az account show` before executing kubectl commands
-  - Clear "Azure CLI session expired" error message guides users to run `az login`
-  - 5-second timeout for validation check prevents hangs
-  - Fixes kubeconfig auth replacement to azurecli without session validation
+- **Enhanced Azure CLI Token Validation** - Robust authentication checks prevent mid-scan failures
+  - Added two-stage validation to `scan_aks_live` and `scan_aks_imds`:
+    1. Account configuration check (`az account show`)
+    2. Token validity verification (`az account get-access-token`)
+  - Detects expired tokens before kubectl operations (not just configured accounts)
+  - Authentication error detection in kubectl operations with clear guidance
+  - Identifies token expiration issues (expired, AADSTS errors) with specific error messages
+  - Clear remediation: "Azure CLI token expired - please run: az login"
+  - Prevents cryptic kubectl authentication failures during scans
+  - 10-second timeout for token validation prevents hangs
 
 ### Changed
 - Dynamic version display in scan output (uses `SERVER_VERSION` from package.json)
