@@ -5,6 +5,46 @@ All notable changes to Stratos (Azure Security Assessment MCP Server) will be do
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-02-14
+
+### Added 🆕 **MAJOR SECURITY EXPANSION**
+- **2 Critical Attack Detection Tools** - Based on 2024-2026 Azure penetration testing research
+
+#### New Tools (37 → 39 tools total)
+
+1. **azure_scan_aks_pod_identity** - AKS Pod Identity Token Theft & Privilege Escalation
+   - Analyzes Workload Identity and Pod Identity configurations
+   - Detects overly permissive managed identities (Owner, Contributor roles)
+   - Identifies managed identities with Key Vault data plane access
+   - Checks Azure AD authentication enablement
+   - Validates OIDC issuer configuration for Workload Identity
+   - Enumerates all managed identity types (user-assigned, system-assigned, kubelet)
+   - Provides IMDS accessibility tests and token theft exploitation examples
+   - Includes kubectl commands for service account enumeration
+   - Risk scoring for each managed identity based on role assignments
+   - **MITRE:** T1552.005 (Cloud Instance Metadata API), T1078.004 (Cloud Accounts)
+
+2. **azure_scan_container_registry_poisoning** - ACR Supply Chain Attacks
+   - Detects public network access to container registries
+   - Identifies admin account enablement (insecure credential method)
+   - Checks content trust/image signing configuration
+   - Validates Defender for Containers enablement (vulnerability scanning)
+   - Analyzes SKU limitations (Basic/Standard vs Premium security features)
+   - Checks encryption at rest (default vs customer-managed keys)
+   - Identifies anonymous pull access vulnerabilities
+   - Validates network restrictions and private endpoints
+   - Reviews retention policies for old vulnerable images
+   - **MITRE:** T1525 (Implant Internal Image), T1195.003 (Supply Chain Compromise)
+
+### Technical Implementation
+- Both tools use **array-based string building** for optimal performance
+- Comprehensive MITRE ATT&CK technique mappings
+- Risk severity scoring (CRITICAL/HIGH/MEDIUM/LOW)
+- Detailed exploitation examples with bash/PowerShell commands
+- Actionable remediation guidance for each finding
+- Support for both markdown and JSON output formats
+- Integration with existing AKS security tools (scan_aks_full, scan_aks_imds)
+
 ## [1.10.9] - 2026-02-14
 
 ### Performance ⚡
