@@ -1,7 +1,9 @@
 name: Release & Publish
 
-# Temporarily disabled
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -16,6 +18,7 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '20.x'
+        registry-url: 'https://registry.npmjs.org'
     
     - name: Install dependencies
       run: npm ci
@@ -32,12 +35,11 @@ jobs:
       id: version
       run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
     
-    # npm publishing disabled - will enable when account is ready
-    # - name: Publish to npm
-    #   if: success()
-    #   run: npm publish
-    #   env:
-    #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    - name: Publish to npm
+      if: success()
+      run: npm publish
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
@@ -54,7 +56,7 @@ jobs:
           ```
           
           ### What's Included
-          - 32 Azure security assessment tools
+          - 39 Azure security assessment tools
           - 65 comprehensive tests
           - OWASP MCP compliance
           - Full MCP annotations
