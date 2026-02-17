@@ -41,7 +41,8 @@ jobs:
       run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
     
     - name: Publish to npm
-      if: success() && secrets.NPM_TOKEN != ''
+      if: success()
+      continue-on-error: true
       run: npm publish
       env:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
