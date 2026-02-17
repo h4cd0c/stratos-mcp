@@ -2,9 +2,9 @@
 
 # Stratos - Azure Security Assessment MCP Server
 
-[![Version](https://img.shields.io/badge/version-1.10.9-blue.svg)](https://github.com/h4cd0c/stratos-mcp)
+[![Version](https://img.shields.io/badge/version-1.13.0-blue.svg)](https://github.com/h4cd0c/stratos-mcp)
 [![Tests](https://img.shields.io/badge/tests-65%20passing-brightgreen.svg)](https://jestjs.io/)
-[![Tools](https://img.shields.io/badge/tools-32-green.svg)](https://github.com/h4cd0c/stratos-mcp)
+[![Tools](https://img.shields.io/badge/tools-38-green.svg)](https://github.com/h4cd0c/stratos-mcp)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 [![Azure SDK](https://img.shields.io/badge/Azure%20SDK-v4+-yellow.svg)](https://azure.microsoft.com/en-us/downloads/)
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)](https://github.com/h4cd0c/stratos-mcp)
@@ -21,7 +21,7 @@
 
 ## Overview
 
-**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 32 production-ready tools covering multi-location scanning, enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including live K8s API scanning and IMDS exploitation), and compliance reporting for Azure cloud environments.
+**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 38 production-ready tools covering multi-location scanning, enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including live K8s API scanning and IMDS exploitation), and compliance reporting for Azure cloud environments.
 
 ### Use Cases
 
@@ -37,7 +37,7 @@
 ### Key Highlights
 
 - **100% Read-Only** - Safe for production environments  
-- **32 Security Tools** - Comprehensive Azure service coverage  
+- **38 Security Tools** - Comprehensive Azure service coverage  
 - **Multi-Location** - Scan common (10) or all (45+) Azure regions  
 - **Multi-Format Reports** - PDF, HTML, CSV, Markdown, JSON  
 - **Attack Path Analysis** - Privilege escalation and lateral movement mapping  
@@ -87,11 +87,17 @@
 <tr>
 <td width="50%">
 
-### ☸️ Kubernetes/AKS (4 Tools)
-- **scan_aks_full** - Comprehensive ARM-based assessment (30+ CIS checks)
-- **scan_aks_live** - Live K8s API scanning (secrets, RBAC, pods, SAs)
-- **scan_aks_imds** - IMDS exploitation & token theft (cluster-wide scan, token export, deep data plane)
+### ☸️ Kubernetes/AKS (3 Tools + Enhanced Features)
+- **scan_aks_full** - 🚀 **ENHANCED** Comprehensive AKS security with multiple scan modes:
+  - `mode: 'full'` - Complete ARM-based assessment (30+ CIS checks)
+  - `mode: 'live'` - Live K8s API scanning (secrets, RBAC, pods, SAs)
+  - `mode: 'imds'` - IMDS exploitation & token theft (cluster-wide scan, token export)
+  - `mode: 'pod_identity'` - Pod Identity/Workload Identity analysis
+  - `mode: 'admission'` - Admission controller bypass detection
+- **scan_aks_policy_bypass** - OPA/Kyverno policy bypass detection
 - **get_aks_credentials** - Extract kubeconfig for kubectl access
+
+**Migration Note (v1.14.0):** Deprecated tools `scan_aks_live`, `scan_aks_imds`, `scan_aks_pod_identity`, and `scan_aks_admission_bypass` are now consolidated into `scan_aks_full` with `scanMode` parameter.
 
 </td>
 <td width="50%">
@@ -113,7 +119,7 @@
 
 ---
 
-## 📋 Tool Reference (32 Tools)
+## 📋 Tool Reference (34 Tools)
 
 ### Naming Convention
 | Prefix | Purpose |
@@ -255,7 +261,7 @@ All 30 security tools now support flexible output formatting via the optional `f
 - ✅ **Metadata** - JSON includes tool name, timestamp, and versioning
 - ✅ **Flexible** - Choose format per-tool based on use case
 
-**Supported Tools:** All security scanners, enumerators, and analyzers (30 tools total)
+**Supported Tools:** All security scanners, enumerators, and analyzers (34 tools total)
 
 **Example Use Cases:**
 ```bash

@@ -54,13 +54,15 @@ const EXPECTED_TOOLS = [
   "analyze_rbac_privesc",
   "detect_persistence_mechanisms",
   "scan_aks_full",
-  "scan_aks_live",
-  "scan_aks_imds"
+  "scan_aks_policy_bypass",
+  "scan_container_apps_security",
+  "scan_gitops_security",
+  "scan_cdn_security"
 ];
 
 describe('Tool Structure Validation', () => {
   test('should have correct number of tools', () => {
-    expect(EXPECTED_TOOLS.length).toBe(32);
+    expect(EXPECTED_TOOLS.length).toBe(34);
   });
 
   test('all tool names should be lowercase with underscores', () => {
