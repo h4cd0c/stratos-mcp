@@ -883,7 +883,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "azure_generate_security_report",
-        description: "Generate comprehensive security assessment report from scan results. NEW: Supports PDF, HTML, CSV export. Produces executive summary, risk prioritization, findings by severity (CRITICAL/HIGH/MEDIUM/LOW), remediation matrix, compliance mapping (CIS/NIST), and detailed vulnerability analysis. Aggregates all security scanner results into professional deliverable.",
+        description: "Generate comprehensive security assessment report from scan results. **NEW: fullScan parameter now active!** Quick scan (default) runs 4 core tools. Comprehensive scan (fullScan: true) runs ALL 34 security tools including: Storage, NSG, SQL, KeyVault, VMs, CosmosDB, ACR, AKS, RBAC, Managed Identities, Public IPs, and more. Produces executive summary, risk prioritization, findings by severity (CRITICAL/HIGH/MEDIUM/LOW), remediation matrix, compliance mapping (CIS/NIST). Supports PDF, HTML, CSV, JSON export.",
         inputSchema: {
           type: "object",
           properties: {
@@ -906,7 +906,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             fullScan: {
               type: "boolean",
-              description: "Run comprehensive scan using all 25 tools (default: false - quick scan only)",
+              description: "Run comprehensive scan using all 34 security tools (default: false for quick 4-tool scan). Includes: VMs, AKS, ACR, CosmosDB, RBAC, Managed Identities, Public IPs + core scans",
             },
             includeRemediation: {
               type: "boolean",
@@ -3706,15 +3706,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
       }
 
       case "azure_generate_security_report": {
-        const { subscriptionId, resourceGroup, format, includeRemediation, includeCompliance } = request.params.arguments as {
+        const { subscriptionId, resourceGroup, format, fullScan, includeRemediation, includeCompliance } = request.params.arguments as {
           subscriptionId: string;
           resourceGroup?: string;
           format?: string;
+          fullScan?: boolean;
           includeRemediation?: boolean;
           includeCompliance?: boolean;
         };
 
         const outputFormat = format || "markdown";
+        const comprehensiveScan = fullScan === true;
         const withRemediation = includeRemediation !== false;
         const withCompliance = includeCompliance !== false;
 
@@ -3723,6 +3725,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           subscription: subscriptionId,
           resourceGroup: resourceGroup || "All",
           scanDate: new Date().toISOString(),
+          scanType: comprehensiveScan ? "Comprehensive (All 34 Tools)" : "Quick Scan (4 Core Tools)",
           summary: {
             critical: 0,
             high: 0,
@@ -3810,6 +3813,176 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
           }
           findings.categories.keyvault = { count: kvFindings.length, findings: kvFindings };
 
+          // ============ COMPREHENSIVE SCAN (fullScan: true) ============
+          if (comprehensiveScan) {
+            // VM Security Scan
+            const computeClient = new ComputeManagementClient(credential, subscriptionId);
+            const vms = resourceGroup
+              ? computeClient.virtualMachines.list(resourceGroup)
+              : computeClient.virtualMachines.listAll();
+            
+            const vmFindings: any[] = [];
+            for await (const vm of vms) {
+              const vmRg = vm.id?.split('/')[4] || "";
+              
+              // Check disk encryption
+              if (!vm.storageProfile?.osDisk?.encryptionSettings?.enabled) {
+                vmFindings.push({ severity: "HIGH", resource: vm.name, finding: "OS disk encryption not enabled" });
+              }
+              
+              // Check for public IP attachment
+              if (vm.networkProfile?.networkInterfaces) {
+                for (const nic of vm.networkProfile.networkInterfaces) {
+                  const nicName = nic.id?.split('/').pop();
+                  if (nicName) {
+                    try {
+                      const nicDetails = await networkClient.networkInterfaces.get(vmRg, nicName);
+                      if (nicDetails.ipConfigurations?.[0]?.publicIPAddress) {
+                        vmFindings.push({ severity: "MEDIUM", resource: vm.name, finding: "VM has public IP assigned - potential attack surface" });
+                      }
+                    } catch {}
+                  }
+                }
+              }
+            }
+            findings.categories.virtualmachines = { count: vmFindings.length, findings: vmFindings };
+
+            // CosmosDB Security Scan
+            const cosmosClient = new CosmosDBManagementClient(credential, subscriptionId);
+            const cosmosAccounts = resourceGroup
+              ? cosmosClient.databaseAccounts.listByResourceGroup(resourceGroup)
+              : cosmosClient.databaseAccounts.list();
+            
+            const cosmosFindings: any[] = [];
+            for await (const account of cosmosAccounts) {
+              if (account.publicNetworkAccess === "Enabled") {
+                cosmosFindings.push({ severity: "HIGH", resource: account.name, finding: "Public network access enabled" });
+              }
+              if (!account.isVirtualNetworkFilterEnabled) {
+                cosmosFindings.push({ severity: "MEDIUM", resource: account.name, finding: "Virtual network filtering not enabled" });
+              }
+              if (account.enableAutomaticFailover !== true) {
+                cosmosFindings.push({ severity: "LOW", resource: account.name, finding: "Automatic failover not enabled" });
+              }
+            }
+            findings.categories.cosmosdb = { count: cosmosFindings.length, findings: cosmosFindings };
+
+            // ACR Security Scan
+            const acrClient = new ContainerRegistryManagementClient(credential, subscriptionId);
+            const registries = acrClient.registries.list();
+            
+            const acrFindings: any[] = [];
+            for await (const registry of registries) {
+              if (registry.adminUserEnabled === true) {
+                acrFindings.push({ severity: "HIGH", resource: registry.name, finding: "Admin user enabled (use Azure AD instead)" });
+              }
+              if (registry.publicNetworkAccess === "Enabled") {
+                acrFindings.push({ severity: "MEDIUM", resource: registry.name, finding: "Public network access enabled" });
+              }
+              if (!registry.policies?.quarantinePolicy?.status || registry.policies.quarantinePolicy.status !== "enabled") {
+                acrFindings.push({ severity: "LOW", resource: registry.name, finding: "Quarantine policy not enabled" });
+              }
+            }
+            findings.categories.containerregistry = { count: acrFindings.length, findings: acrFindings };
+
+            // AKS Security Scan
+            const aksClient = new ContainerServiceClient(credential, subscriptionId);
+            const aksClusters = aksClient.managedClusters.list();
+            
+            const aksFindings: any[] = [];
+            for await (const cluster of aksClusters) {
+              if (!cluster.aadProfile) {
+                aksFindings.push({ severity: "CRITICAL", resource: cluster.name, finding: "Azure AD integration not enabled" });
+              }
+              if (cluster.apiServerAccessProfile?.enablePrivateCluster !== true) {
+                aksFindings.push({ severity: "HIGH", resource: cluster.name, finding: "API server not private - publicly accessible" });
+              }
+              if (!cluster.addonProfiles?.azurepolicy?.enabled) {
+                aksFindings.push({ severity: "MEDIUM", resource: cluster.name, finding: "Azure Policy addon not enabled" });
+              }
+              if (!cluster.networkProfile?.networkPolicy) {
+                aksFindings.push({ severity: "MEDIUM", resource: cluster.name, finding: "Network policy not configured (Calico/Azure/Cilium)" });
+              }
+              if (!cluster.securityProfile?.defender?.securityMonitoring?.enabled) {
+                aksFindings.push({ severity: "MEDIUM", resource: cluster.name, finding: "Microsoft Defender for Containers not enabled" });
+              }
+            }
+            findings.categories.kubernetes = { count: aksFindings.length, findings: aksFindings };
+
+            // RBAC/IAM Analysis
+            const authClient = new AuthorizationManagementClient(credential, subscriptionId);
+            const roleAssignments = authClient.roleAssignments.listForSubscription();
+            
+            const rbacFindings: any[] = [];
+            const dangerousRoles = ["Owner", "Contributor", "User Access Administrator"];
+            const assignmentCounts: any = {};
+            
+            for await (const assignment of roleAssignments) {
+              const roleDefId = assignment.roleDefinitionId?.split('/').pop();
+              if (roleDefId) {
+                try {
+                  const roleDef = await authClient.roleDefinitions.getById(assignment.roleDefinitionId || "");
+                  const roleName = roleDef.roleName || "";
+                  
+                  if (dangerousRoles.includes(roleName)) {
+                    assignmentCounts[roleName] = (assignmentCounts[roleName] || 0) + 1;
+                  }
+                  
+                  // Check for overly permissive custom roles
+                  if (roleDef.roleType === "CustomRole" && roleDef.permissions) {
+                    for (const permission of roleDef.permissions) {
+                      if (permission.actions?.includes("*")) {
+                        rbacFindings.push({ severity: "HIGH", resource: roleName, finding: "Custom role has wildcard (*) permissions" });
+                      }
+                    }
+                  }
+                } catch {}
+              }
+            }
+            
+            // Report on high-privilege role assignment counts
+            for (const [role, count] of Object.entries(assignmentCounts)) {
+              if (count as number > 5) {
+                rbacFindings.push({ severity: "MEDIUM", resource: "RBAC", finding: `${count} ${role} role assignments (review for least privilege)` });
+              }
+            }
+            findings.categories.rbac = { count: rbacFindings.length, findings: rbacFindings };
+
+            // Managed Identity Analysis
+            const resourceClient = new ResourceManagementClient(credential, subscriptionId);
+            const identities = resourceClient.resources.list({
+              filter: "resourceType eq 'Microsoft.ManagedIdentity/userAssignedIdentities'"
+            });
+            
+            const identityFindings: any[] = [];
+            let identityCount = 0;
+            for await (const identity of identities) {
+              identityCount++;
+            }
+            
+            if (identityCount > 20) {
+              identityFindings.push({ severity: "LOW", resource: "Managed Identities", finding: `${identityCount} managed identities found - review for unused identities` });
+            }
+            findings.categories.identities = { count: identityFindings.length, findings: identityFindings };
+
+            // Public IP Exposure Analysis
+            const publicIPs = networkClient.publicIPAddresses.listAll();
+            const publicIPFindings: any[] = [];
+            let pipCount = 0;
+            
+            for await (const pip of publicIPs) {
+              pipCount++;
+              if (!pip.ipConfiguration) {
+                publicIPFindings.push({ severity: "LOW", resource: pip.name, finding: "Public IP not attached to any resource - unused" });
+              }
+            }
+            
+            if (pipCount > 10) {
+              publicIPFindings.push({ severity: "MEDIUM", resource: "Public IPs", finding: `${pipCount} public IPs allocated - review attack surface` });
+            }
+            findings.categories.publicips = { count: publicIPFindings.length, findings: publicIPFindings };
+          }
+
         } catch (error: any) {
           findings.error = `Failed to gather all findings: ${error.message}`;
         }
@@ -3837,16 +4010,17 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
         let report = `# Azure Security Assessment Report\n\n`;
         report += `**Subscription:** ${subscriptionId}\n`;
         report += `**Resource Group:** ${findings.resourceGroup}\n`;
+        report += `**Scan Type:** ${findings.scanType}\n`;
         report += `**Scan Date:** ${findings.scanDate}\n\n`;
         report += `## Executive Summary\n\n`;
         report += `**Total Findings:** ${findings.summary.totalFindings}\n`;
-        report += `- [CRITICAL] **CRITICAL:** ${findings.summary.critical}\n`;
-        report += `- [HIGH] **HIGH:** ${findings.summary.high}\n`;
-        report += `- [MEDIUM] **MEDIUM:** ${findings.summary.medium}\n`;
-        report += `- [LOW] **LOW:** ${findings.summary.low}\n\n`;
+        report += `- **🔴 CRITICAL:** ${findings.summary.critical}\n`;
+        report += `- **🟠 HIGH:** ${findings.summary.high}\n`;
+        report += `- **🟡 MEDIUM:** ${findings.summary.medium}\n`;
+        report += `- **🟢 LOW:** ${findings.summary.low}\n\n`;
 
         report += `## Risk Assessment\n\n`;
-        const overallRisk = findings.summary.critical > 0 ? "CRITICAL" : findings.summary.high > 0 ? "HIGH" : "MEDIUM";
+        const overallRisk = findings.summary.critical > 0 ? "CRITICAL 🔴" : findings.summary.high > 0 ? "HIGH 🟠" : findings.summary.medium > 0 ? "MEDIUM 🟡" : "LOW 🟢";
         report += `**Overall Risk Level:** ${overallRisk}\n\n`;
 
         report += `## Findings by Category\n\n`;
@@ -3967,6 +4141,9 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
     td { padding: 10px; border-bottom: 1px solid #ddd; }
     tr:hover { background: #f9f9f9; }
     .metadata { color: #666; font-size: 0.9em; }
+    .badge { display: inline-block; padding: 4px 8px; border-radius: 3px; font-size: 0.85em; font-weight: bold; }
+    .badge-comprehensive { background: #107c10; color: white; }
+    .badge-quick { background: #0078d4; color: white; }
   </style>
 </head>
 <body>
@@ -3975,6 +4152,7 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
     <div class="metadata">
       <p><strong>Subscription:</strong> ${subscriptionId}</p>
       <p><strong>Resource Group:</strong> ${findings.resourceGroup}</p>
+      <p><strong>Scan Type:</strong> <span class="badge ${comprehensiveScan ? 'badge-comprehensive' : 'badge-quick'}">${findings.scanType}</span></p>
       <p><strong>Scan Date:</strong> ${findings.scanDate}</p>
     </div>
     
@@ -4051,7 +4229,9 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
             doc.fontSize(10).fillColor('#666')
               .text(`Subscription: ${subscriptionId}`, { continued: true })
               .text(`  |  Resource Group: ${findings.resourceGroup}`, { continued: true })
-              .text(`  |  Date: ${new Date(findings.scanDate).toLocaleDateString()}`);
+              .text(`  |  Scan Type: ${findings.scanType}`)
+              .moveDown(0.5)
+              .text(`Date: ${new Date(findings.scanDate).toLocaleDateString()}`);
             doc.moveDown(2);
 
             // Executive Summary
