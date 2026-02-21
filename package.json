@@ -1,7 +1,7 @@
 {
   "name": "stratos-mcp",
-  "version": "1.13.0",
-  "description": "Stratos - Azure Security Assessment MCP Server - 34 Professional Security Tools (Unified AKS Scanning, Container Apps, GitOps, CDN, Full Scan Reports)",
+  "version": "1.14.0",
+  "description": "Stratos - Azure Security Assessment MCP Server - 40 Professional Security Tools (v1.14.0: Enhanced Storage SAS+WORM, RBAC Service Principals, Managed Identity Federation, NSG Service Endpoints, Multi-Database Support PostgreSQL/MySQL/Redis, Function Apps Event Grid/Service Bus, NEW: Backup Security, VNet Peering, Private Endpoints, Diagnostic Settings, Defender Coverage, Policy Compliance)",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {

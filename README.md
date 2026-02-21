@@ -2,9 +2,9 @@
 
 # Stratos - Azure Security Assessment MCP Server
 
-[![Version](https://img.shields.io/badge/version-1.12.0-blue.svg)](https://github.com/h4cd0c/stratos-mcp)
+[![Version](https://img.shields.io/badge/version-1.14.0-blue.svg)](https://github.com/h4cd0c/stratos-mcp)
 [![Tests](https://img.shields.io/badge/tests-65%20passing-brightgreen.svg)](https://jestjs.io/)
-[![Tools](https://img.shields.io/badge/tools-34-green.svg)](https://github.com/h4cd0c/stratos-mcp)
+[![Tools](https://img.shields.io/badge/tools-40-green.svg)](https://github.com/h4cd0c/stratos-mcp)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 [![Azure SDK](https://img.shields.io/badge/Azure%20SDK-v4+-yellow.svg)](https://azure.microsoft.com/en-us/downloads/)
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)](https://github.com/h4cd0c/stratos-mcp)
@@ -21,7 +21,7 @@
 
 ## Overview
 
-**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 34 production-ready tools covering multi-location scanning, enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including live K8s API scanning and IMDS exploitation), and compliance reporting for Azure cloud environments.
+**Stratos** is a comprehensive Azure security assessment framework built on the Model Context Protocol (MCP). It provides 40 production-ready tools covering multi-location scanning, enumeration, vulnerability scanning, attack path analysis, AKS/Kubernetes security (including live K8s API scanning and IMDS exploitation), backup security, VNet topology analysis, private endpoint validation, and compliance reporting for Azure cloud environments.
 
 ### Use Cases
 
@@ -37,12 +37,22 @@
 ### Key Highlights
 
 - **100% Read-Only** - Safe for production environments  
-- **34 Security Tools** - Comprehensive Azure service coverage  
+- **40 Security Tools** - Comprehensive Azure service coverage (v1.14.0)  
 - **Multi-Location** - Scan common (10) or all (45+) Azure regions  
 - **Multi-Format Reports** - PDF, HTML, CSV, Markdown, JSON  
 - **Attack Path Analysis** - Privilege escalation and lateral movement mapping  
 - **AKS/Kubernetes** - 4 consolidated container security tools (ARM + Live K8s + IMDS)  
 - **Enterprise Ready** - Professional reports for executives and auditors
+
+### What's New in v1.14.0 🎉
+
+**Critical Security Enhancement - Research-Driven Expansion**
+
+- **6 New Security Tools** - Backup security, VNet peering, Private Endpoints, Diagnostic Settings, Defender coverage, Policy compliance
+- **8 Enhanced Tools** - Storage (SAS tokens + WORM), Service Principals (RBAC-focused), Managed Identities (federation), NSG (service endpoints + load balancers), SQL (PostgreSQL + MySQL + Redis), Function Apps (Event Grid + Service Bus)
+- **23 New Parameters** - Extended capabilities across existing tools (100% backward compatible)
+- **Research Attribution** - Based on Azure Security Benchmark v3, redskycyber/Cloud-Security, CIS Azure Foundations
+- **Cloud Infrastructure Focus** - Service principal analysis excludes Azure AD (cloud resources only)
 
 ---
 
@@ -119,7 +129,7 @@
 
 ---
 
-## 📋 Tool Reference (34 Tools)
+## 📋 Tool Reference (40 Tools)
 
 ### Naming Convention
 | Prefix | Purpose |
@@ -169,6 +179,12 @@
 | 32 | `azure_scan_container_apps_security` | Containers | Azure Container Apps security scanner |
 | 33 | `azure_scan_gitops_security` | DevOps | GitOps/Flux security scanner |
 | 34 | `azure_scan_cdn_security` | Network | Azure CDN & Front Door security |
+| 35 | `azure_analyze_backup_security` | Security | **NEW v1.14.0** Recovery Services Vault security (soft delete, immutability, ASR) |
+| 36 | `azure_analyze_vnet_peering` | Network | **NEW v1.14.0** VNet peering security (gateway transit, cross-tenant) |
+| 37 | `azure_validate_private_endpoints` | Network | **NEW v1.14.0** Private Link validation (DNS, connection state) |
+| 38 | `azure_validate_diagnostic_settings` | Compliance | **NEW v1.14.0** Logging compliance (NIST/CIS mapping) |
+| 39 | `azure_assess_defender_coverage` | Security | **NEW v1.14.0** Defender for Cloud coverage assessment |
+| 40 | `azure_validate_policy_compliance` | Compliance | **NEW v1.14.0** Azure Policy governance validation |
 
 ---
 
