@@ -5,6 +5,40 @@ All notable changes to Stratos (Azure Security Assessment MCP Server) will be do
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] - 2026-03-18
+
+### Added ✅ **3 NEW SECURITY TOOLS (43 total)**
+
+1. **`azure_enumerate_role_definitions`** - RBAC Role Definition Audit
+   - Enumerates all role definitions scoped to the subscription
+   - Detects wildcard `Actions: ["*"]` — CRITICAL severity
+   - Flags 8 high-value dangerous permissions: `roleAssignments/write`, `roleDefinitions/write`, `listKeys/action`, `listClusterAdminCredential`, `runCommand/action`, etc.
+   - `includeBuiltIn: true` to include built-in roles alongside custom ones
+   - Sorted by severity: CRITICAL → HIGH → MEDIUM → INFO
+
+2. **`azure_analyze_application_gateway`** - App Gateway & WAF Security Analysis
+   - Checks WAF enabled/disabled per gateway
+   - Detects Detection-mode WAF (blocks nothing)
+   - Flags outdated OWASP rule sets (< v3.2)
+   - Identifies disabled WAF rule groups
+   - CRITICAL: TLSv1.0/1.1 not explicitly disabled in SSL policy
+   - HIGH: HTTP-only listeners (no HTTPS enforcement)
+   - Scans all resource groups or filtered by `resourceGroup`
+
+3. **`azure_scan_managed_disks`** - Managed Disk Security Scan
+   - CRITICAL: `publicNetworkAccess=Enabled` on unattached disks (direct data exfiltration)
+   - HIGH: `publicNetworkAccess=Enabled` on attached disks
+   - Detects orphaned (unattached) disks
+   - Flags platform-managed encryption keys (no customer lifecycle control)
+   - `orphanedOnly: true` to focus on unattached disks only
+   - Scans subscription-wide or filtered by `resourceGroup`
+
+### Removed ❌ **Dead Code Cleanup**
+- Removed 7 unused validator functions that were defined but never called by any tool handler: `validateInput`, `validateSubscriptionId`, `validateLocation`, `validateResourceType`, `validateOutputFormat`, `validateResourceGroup`, `validateResourceName`
+- These were replaced at v1.10 when tool handlers moved to direct argument casting — the functions were leftover scaffolding (~145 lines removed)
+
+---
+
 ## [1.14.0] - 2026-02-21
 
 ### Added 🆕 **CRITICAL SECURITY ENHANCEMENT - 6 NEW TOOLS + 8 ENHANCED TOOLS (40 Total)**

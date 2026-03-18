@@ -134,165 +134,6 @@ const VALID_RESOURCE_TYPES = [
   "vms", "storage", "nsgs", "aks", "sql", "keyvaults", "public_ips", "all"
 ];
 
-/**
- * Validate generic string input with sanitization
- */
-function validateInput(
-  input: string | undefined,
-  options: {
-    required?: boolean;
-    maxLength?: number;
-    pattern?: RegExp;
-    patternName?: string;
-    allowedValues?: string[];
-  } = {}
-): string | undefined {
-  if (input === undefined || input === null || input === '') {
-    if (options.required) {
-      throw new ValidationError('Required input is missing', { field: 'input' });
-    }
-    return undefined;
-  }
-  
-  // Sanitize: trim and remove control characters
-  const sanitized = input.toString().trim().replace(/[\x00-\x1f\x7f]/g, '');
-  
-  // Length check
-  const maxLen = options.maxLength || 1000;
-  if (sanitized.length > maxLen) {
-    throw new ValidationError(
-      `Input exceeds maximum length of ${maxLen} characters`,
-      { provided: sanitized.length, maxLength: maxLen }
-    );
-  }
-  
-  // Allowed values check
-  if (options.allowedValues && !options.allowedValues.includes(sanitized)) {
-    throw new ValidationError(
-      `Invalid value: ${sanitized}. Allowed: ${options.allowedValues.join(', ')}`,
-      { provided: sanitized, allowed: options.allowedValues }
-    );
-  }
-  
-  // Pattern validation
-  if (options.pattern && !options.pattern.test(sanitized)) {
-    const name = options.patternName || 'input';
-    throw new ValidationError(
-      `Invalid ${name} format: ${sanitized}`,
-      { provided: sanitized, pattern: options.pattern.toString() }
-    );
-  }
-  
-  return sanitized;
-}
-
-/**
- * Validate Azure subscription ID
- */
-function validateSubscriptionId(subscriptionId: string | undefined, required: boolean = true): string | undefined {
-  if (!subscriptionId && !required) return undefined;
-  if (!subscriptionId && required) {
-    throw new ValidationError('Subscription ID is required', { field: 'subscriptionId' });
-  }
-  
-  return validateInput(subscriptionId, {
-    required,
-    pattern: AZURE_PATTERNS.subscriptionId,
-    patternName: 'subscription ID',
-    maxLength: 36,
-  });
-}
-
-/**
- * Validate Azure location
- */
-function validateLocation(location: string | undefined, allowMultiple: boolean = false): string | undefined {
-  if (!location) return undefined;
-  
-  const sanitized = location.trim().toLowerCase();
-  
-  // Allow special values
-  if (sanitized === 'all' || sanitized === 'common') {
-    return sanitized;
-  }
-  
-  // Allow comma-separated values if allowMultiple
-  if (allowMultiple && sanitized.includes(',')) {
-    const locations = sanitized.split(',').map(l => l.trim());
-    locations.forEach(loc => {
-      if (!AZURE_PATTERNS.location.test(loc) && !AZURE_LOCATIONS.includes(loc) && !COMMON_LOCATIONS.includes(loc)) {
-        throw new Error(`Invalid Azure location: ${loc}`);
-      }
-    });
-    return sanitized;
-  }
-  
-  // Single location validation
-  if (!AZURE_PATTERNS.location.test(sanitized)) {
-    throw new Error(`Invalid Azure location format: ${location}`);
-  }
-  
-  // Whitelist check
-  if (!AZURE_LOCATIONS.includes(sanitized) && !COMMON_LOCATIONS.includes(sanitized)) {
-    throw new Error(`Unknown Azure location: ${location}. Use one of: ${COMMON_LOCATIONS.slice(0, 5).join(', ')}...`);
-  }
-  
-  return sanitized;
-}
-
-/**
- * Validate resource type
- */
-function validateResourceType(resourceType: string | undefined): string {
-  if (!resourceType) {
-    throw new Error('Resource type is required');
-  }
-  
-  return validateInput(resourceType, {
-    required: true,
-    allowedValues: VALID_RESOURCE_TYPES,
-    patternName: 'resource type',
-  })!;
-}
-
-/**
- * Validate output format
- */
-function validateOutputFormat(format: string | undefined): 'markdown' | 'json' {
-  if (!format) return 'markdown';
-  
-  const sanitized = format.trim().toLowerCase();
-  if (sanitized !== 'markdown' && sanitized !== 'json') {
-    throw new Error(`Invalid format: ${format}. Must be 'markdown' or 'json'.`);
-  }
-  
-  return sanitized as 'markdown' | 'json';
-}
-
-/**
- * Validate resource group name
- */
-function validateResourceGroup(resourceGroup: string | undefined, required: boolean = false): string | undefined {
-  return validateInput(resourceGroup, {
-    required,
-    maxLength: 90,
-    pattern: AZURE_PATTERNS.resourceGroup,
-    patternName: 'resource group',
-  });
-}
-
-/**
- * Validate resource name
- */
-function validateResourceName(resourceName: string | undefined, required: boolean = false): string | undefined {
-  return validateInput(resourceName, {
-    required,
-    maxLength: 80,
-    pattern: AZURE_PATTERNS.resourceName,
-    patternName: 'resource name',
-  });
-}
-
 // Create MCP server instance
 const server = new Server(
   {
@@ -1679,6 +1520,97 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               enum: ["markdown", "json"],
               description: "Output format: 'markdown' (default, human-readable) or 'json' (machine-readable)",
+            },
+          },
+          required: ["subscriptionId"],
+        },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
+      },
+      {
+        name: "azure_enumerate_role_definitions",
+        description: "Enumerate Azure RBAC role definitions including custom roles. Identifies dangerous wildcard permissions (Actions: ['*']), overly broad custom roles, and privilege escalation paths via PassRole/roleAssignments-write. Checks all role definitions scoped to the subscription.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            includeBuiltIn: {
+              type: "boolean",
+              description: "Include built-in role definitions in output. Default: false (custom roles only)",
+            },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default) or 'json'",
+            },
+          },
+          required: ["subscriptionId"],
+        },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
+      },
+      {
+        name: "azure_analyze_application_gateway",
+        description: "Analyze Azure Application Gateway and WAF (Web Application Firewall) security configuration. Checks: WAF enabled/disabled, WAF mode (Detection vs Prevention), OWASP rule set version, disabled rule groups, SSL/TLS policy version (TLSv1.0/1.1 = CRITICAL), HTTP-only listeners (no HTTPS redirect), backend authentication certificates, request routing rules. Identifies misconfigurations leading to WAF bypass and MitM attacks.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Optional: Filter by specific resource group",
+            },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default) or 'json'",
+            },
+          },
+          required: ["subscriptionId"],
+        },
+        annotations: {
+          readOnly: true,
+          destructive: false,
+          idempotent: false,
+          openWorld: true
+        }
+      },
+      {
+        name: "azure_scan_managed_disks",
+        description: "Scan Azure Managed Disks for security misconfigurations. Checks: encryption type (platform-managed vs customer-managed key), public network access enabled (allows arbitrary download), orphaned disks (unattached — data exposure risk), disk state, OS vs data disk classification. CRITICAL: publicNetworkAccess=Enabled on unattached disks is a direct data exfiltration path.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            subscriptionId: {
+              type: "string",
+              description: "Azure subscription ID",
+            },
+            resourceGroup: {
+              type: "string",
+              description: "Optional: Filter by specific resource group",
+            },
+            orphanedOnly: {
+              type: "boolean",
+              description: "Only return unattached (orphaned) disks. Default: false",
+            },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format: 'markdown' (default) or 'json'",
             },
           },
           required: ["subscriptionId"],
@@ -7832,6 +7764,324 @@ generate_security_report subscriptionId="SUB" format="csv" outputFile="C:\\\\fin
 
         return {
           content: [{ type: "text", text: formatResponse(summary, format, request.params.name) }],
+        };
+      }
+
+      case "azure_enumerate_role_definitions": {
+        const { subscriptionId, includeBuiltIn, format } = request.params.arguments as {
+          subscriptionId: string;
+          includeBuiltIn?: boolean;
+          format?: string;
+        };
+
+        const authClient = new AuthorizationManagementClient(credential, subscriptionId);
+        const listScope = `/subscriptions/${subscriptionId}`;
+        const showBuiltIn = includeBuiltIn === true;
+
+        const rdFindings: any[] = [];
+        const HIGH_VALUE_ACTIONS = [
+          "Microsoft.Authorization/roleAssignments/write",
+          "Microsoft.Authorization/roleDefinitions/write",
+          "Microsoft.Authorization/policyAssignments/write",
+          "Microsoft.Compute/virtualMachines/runCommand/action",
+          "Microsoft.KeyVault/vaults/secrets/read",
+          "Microsoft.Storage/storageAccounts/listKeys/action",
+          "Microsoft.Web/sites/publishxml/action",
+          "Microsoft.ContainerService/managedClusters/listClusterAdminCredential/action",
+        ];
+
+        for await (const roleDef of authClient.roleDefinitions.list(listScope)) {
+          if (!showBuiltIn && roleDef.roleType === "BuiltInRole") continue;
+
+          const allActions = roleDef.permissions?.flatMap(p => p.actions || []) || [];
+          const notActions = roleDef.permissions?.flatMap(p => p.notActions || []) || [];
+          const dataActions = roleDef.permissions?.flatMap(p => p.dataActions || []) || [];
+
+          const hasWildcard = allActions.includes("*");
+          const highValueMatches = HIGH_VALUE_ACTIONS.filter(a =>
+            allActions.some(pa => pa === "*" || pa === a || (pa.endsWith("*") && a.startsWith(pa.slice(0, -1))))
+          );
+          const hasDataWildcard = dataActions.includes("*");
+
+          let rdSeverity = "INFO";
+          if (hasWildcard) rdSeverity = "CRITICAL";
+          else if (highValueMatches.length >= 3) rdSeverity = "HIGH";
+          else if (highValueMatches.length >= 1) rdSeverity = "MEDIUM";
+
+          rdFindings.push({
+            roleName: roleDef.roleName,
+            roleType: roleDef.roleType,
+            roleId: roleDef.id,
+            severity: rdSeverity,
+            hasWildcard,
+            hasDataWildcard,
+            highValuePermissions: highValueMatches,
+            totalPermissions: allActions.length,
+            notActionsCount: notActions.length,
+            description: roleDef.description,
+            assignableScopes: roleDef.assignableScopes,
+          });
+        }
+
+        rdFindings.sort((a, b) => {
+          const order = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, INFO: 3 };
+          return (order[a.severity as keyof typeof order] ?? 4) - (order[b.severity as keyof typeof order] ?? 4);
+        });
+
+        const rdCritical = rdFindings.filter(f => f.severity === "CRITICAL");
+        const rdHigh = rdFindings.filter(f => f.severity === "HIGH");
+        const rdMedium = rdFindings.filter(f => f.severity === "MEDIUM");
+        const customCount = rdFindings.filter(f => f.roleType !== "BuiltInRole").length;
+
+        const rdOutput = `# Azure RBAC Role Definitions Analysis
+
+## Summary
+- Total Roles Scanned: ${rdFindings.length} (${customCount} custom${showBuiltIn ? `, ${rdFindings.length - customCount} built-in` : ""})
+- 🔴 CRITICAL (wildcard \`*\`): ${rdCritical.length}
+- 🟠 HIGH (3+ dangerous permissions): ${rdHigh.length}
+- 🟡 MEDIUM (1-2 dangerous permissions): ${rdMedium.length}
+
+## Critical Findings (Wildcard Permissions)
+${rdCritical.length === 0 ? "_None_" : rdCritical.map(f => `### ${f.roleName} [${f.roleType}]
+- **Actions:** \`*\` (full control)
+- **Data Actions Wildcard:** ${f.hasDataWildcard ? "Yes ⚠️" : "No"}
+- **Assignable Scopes:** ${f.assignableScopes?.join(", ") || "N/A"}
+`).join("\n")}
+
+## High/Medium Risk Roles
+${[...rdHigh, ...rdMedium].length === 0 ? "_None_" : [...rdHigh, ...rdMedium].map(f => `### ${f.roleName} [${f.severity}]
+- **Type:** ${f.roleType}
+- **Dangerous Permissions:** ${f.highValuePermissions.join(", ") || "None"}
+- **Total Actions:** ${f.totalPermissions}
+`).join("\n")}
+
+## All Findings
+\`\`\`json
+${JSON.stringify(rdFindings, null, 2)}
+\`\`\``;
+
+        return {
+          content: [{ type: "text", text: formatResponse(rdOutput, format, request.params.name) }],
+        };
+      }
+
+      case "azure_analyze_application_gateway": {
+        const { subscriptionId, resourceGroup: agResourceGroup, format } = request.params.arguments as {
+          subscriptionId: string;
+          resourceGroup?: string;
+          format?: string;
+        };
+
+        const networkClient = new NetworkManagementClient(credential, subscriptionId);
+        const resourceClient = new ResourceManagementClient(credential, subscriptionId);
+
+        const agFindings: any[] = [];
+
+        const gatewayResources: { gw: any; rg: string }[] = [];
+        if (agResourceGroup) {
+          for await (const gw of networkClient.applicationGateways.list(agResourceGroup)) {
+            gatewayResources.push({ gw, rg: agResourceGroup });
+          }
+        } else {
+          for await (const rg of resourceClient.resourceGroups.list()) {
+            if (!rg.name) continue;
+            try {
+              for await (const gw of networkClient.applicationGateways.list(rg.name)) {
+                gatewayResources.push({ gw, rg: rg.name });
+              }
+            } catch { /* RG may have no app gateways */ }
+          }
+        }
+
+        for (const { gw, rg } of gatewayResources) {
+          const gwIssues: string[] = [];
+          let gwSeverity = "INFO";
+
+          const setGwSeverity = (s: string) => {
+            const order = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4 };
+            if ((order[s as keyof typeof order] ?? 99) < (order[gwSeverity as keyof typeof order] ?? 99)) gwSeverity = s;
+          };
+
+          const wafConfig = gw.webApplicationFirewallConfiguration;
+          const sku = gw.sku?.name || "";
+          const isWafSku = sku.toLowerCase().includes("waf");
+
+          if (!isWafSku || !wafConfig?.enabled) {
+            gwIssues.push("WAF not enabled — application traffic unprotected");
+            setGwSeverity("HIGH");
+          } else if (wafConfig?.firewallMode === "Detection") {
+            gwIssues.push("WAF in Detection mode — attacks logged but NOT blocked");
+            setGwSeverity("MEDIUM");
+          }
+
+          if (wafConfig?.ruleSetVersion && parseFloat(wafConfig.ruleSetVersion) < 3.2) {
+            gwIssues.push(`OWASP rule set v${wafConfig.ruleSetVersion} — outdated (current: 3.2)`);
+            setGwSeverity("MEDIUM");
+          }
+
+          if (wafConfig?.disabledRuleGroups && wafConfig.disabledRuleGroups.length > 0) {
+            gwIssues.push(`${wafConfig.disabledRuleGroups.length} WAF rule group(s) disabled`);
+            setGwSeverity("MEDIUM");
+          }
+
+          const sslPolicy = gw.sslPolicy;
+          if (!sslPolicy) {
+            gwIssues.push("No SSL policy configured — may allow TLSv1.0/1.1");
+            setGwSeverity("HIGH");
+          } else {
+            const disabledProtos = sslPolicy.disabledSslProtocols || [];
+            if (!disabledProtos.includes("TLSv1") || !disabledProtos.includes("TLSv1_1")) {
+              gwIssues.push("TLSv1.0/1.1 not explicitly disabled — MitM downgrade risk");
+              setGwSeverity("CRITICAL");
+            }
+          }
+
+          const httpListeners = (gw.httpListeners || []).filter((l: any) => l.protocol === "Http");
+          if (httpListeners.length > 0) {
+            gwIssues.push(`${httpListeners.length} HTTP-only listener(s) — plaintext traffic`);
+            setGwSeverity("HIGH");
+          }
+
+          if (gwIssues.length === 0) gwIssues.push("No critical misconfigurations found");
+
+          agFindings.push({
+            name: gw.name,
+            resourceGroup: rg,
+            location: gw.location,
+            sku,
+            wafEnabled: isWafSku && (wafConfig?.enabled === true),
+            wafMode: wafConfig?.firewallMode || "N/A",
+            severity: gwSeverity,
+            findings: gwIssues,
+          });
+        }
+
+        agFindings.sort((a, b) => {
+          const order = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4 };
+          return (order[a.severity as keyof typeof order] ?? 9) - (order[b.severity as keyof typeof order] ?? 9);
+        });
+
+        const agOutput = `# Azure Application Gateway Security Analysis
+
+## Summary
+- Total Gateways: ${agFindings.length}
+- 🔴 CRITICAL: ${agFindings.filter(f => f.severity === "CRITICAL").length}
+- 🟠 HIGH: ${agFindings.filter(f => f.severity === "HIGH").length}
+- 🟡 MEDIUM: ${agFindings.filter(f => f.severity === "MEDIUM").length}
+- ✅ CLEAN: ${agFindings.filter(f => f.severity === "INFO").length}
+
+## Findings
+${agFindings.length === 0 ? "_No Application Gateways found in subscription_" :
+agFindings.map(f => `### ${f.name} (${f.resourceGroup}) [${f.severity}]
+- **SKU:** ${f.sku} | **Location:** ${f.location}
+- **WAF:** ${f.wafEnabled ? `Enabled (${f.wafMode})` : "⚠️ Disabled"}
+${f.findings.map((fi: string) => `- ${fi}`).join("\n")}
+`).join("\n")}`;
+
+        return {
+          content: [{ type: "text", text: formatResponse(agOutput, format, request.params.name) }],
+        };
+      }
+
+      case "azure_scan_managed_disks": {
+        const { subscriptionId, resourceGroup: diskRg, orphanedOnly, format } = request.params.arguments as {
+          subscriptionId: string;
+          resourceGroup?: string;
+          orphanedOnly?: boolean;
+          format?: string;
+        };
+
+        const computeClient = new ComputeManagementClient(credential, subscriptionId);
+        const diskList = diskRg
+          ? computeClient.disks.listByResourceGroup(diskRg)
+          : computeClient.disks.list();
+
+        const diskFindings: any[] = [];
+
+        for await (const disk of diskList) {
+          const isAttached = disk.diskState === "Attached" || disk.diskState === "Reserved";
+          if (orphanedOnly && isAttached) continue;
+
+          const diskIssues: string[] = [];
+          let diskSeverity = "INFO";
+
+          const setDiskSeverity = (s: string) => {
+            const order = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4 };
+            if ((order[s as keyof typeof order] ?? 99) < (order[diskSeverity as keyof typeof order] ?? 99)) diskSeverity = s;
+          };
+
+          if ((disk as any).publicNetworkAccess === "Enabled") {
+            diskIssues.push("publicNetworkAccess=Enabled — SAS token allows arbitrary download");
+            setDiskSeverity(!isAttached ? "CRITICAL" : "HIGH");
+          }
+
+          const encType = disk.encryption?.type;
+          if (!encType || encType === "EncryptionAtRestWithPlatformKey") {
+            diskIssues.push("Platform-managed key — no customer control over key lifecycle");
+            setDiskSeverity("LOW");
+          }
+
+          if (!isAttached) {
+            diskIssues.push(`Unattached disk (state: ${disk.diskState}) — stale data exposure risk`);
+            setDiskSeverity("MEDIUM");
+          }
+
+          if ((disk as any).networkAccessPolicy === "AllowAll") {
+            diskIssues.push("networkAccessPolicy=AllowAll — no private endpoint restriction");
+            setDiskSeverity("MEDIUM");
+          }
+
+          if (diskIssues.length === 0) diskIssues.push("No misconfigurations found");
+
+          const rg = disk.id?.split("/")[4] || diskRg || "unknown";
+          diskFindings.push({
+            name: disk.name,
+            resourceGroup: rg,
+            location: disk.location,
+            diskSizeGB: disk.diskSizeGB,
+            diskState: disk.diskState,
+            osType: disk.osType || "Data",
+            encryptionType: encType || "EncryptionAtRestWithPlatformKey",
+            publicNetworkAccess: (disk as any).publicNetworkAccess || "Unknown",
+            isOrphaned: !isAttached,
+            severity: diskSeverity,
+            findings: diskIssues,
+          });
+        }
+
+        diskFindings.sort((a, b) => {
+          const order = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4 };
+          return (order[a.severity as keyof typeof order] ?? 9) - (order[b.severity as keyof typeof order] ?? 9);
+        });
+
+        const orphaned = diskFindings.filter(f => f.isOrphaned);
+        const publicAccess = diskFindings.filter(f => f.publicNetworkAccess === "Enabled");
+
+        const diskOutput = `# Azure Managed Disk Security Scan
+
+## Summary
+- Total Disks: ${diskFindings.length}
+- 🔴 CRITICAL: ${diskFindings.filter(f => f.severity === "CRITICAL").length}
+- 🟠 HIGH: ${diskFindings.filter(f => f.severity === "HIGH").length}
+- 🟡 MEDIUM: ${diskFindings.filter(f => f.severity === "MEDIUM").length}
+- Unattached (Orphaned): ${orphaned.length}
+- Public Network Access Enabled: ${publicAccess.length}
+
+## Critical / High Risk Disks
+${diskFindings.filter(f => ["CRITICAL", "HIGH"].includes(f.severity)).length === 0 ? "_None_" :
+diskFindings.filter(f => ["CRITICAL", "HIGH"].includes(f.severity)).map(f => `### ${f.name} [${f.severity}]
+- **RG:** ${f.resourceGroup} | **Location:** ${f.location} | **Size:** ${f.diskSizeGB}GB
+- **State:** ${f.diskState} | **Type:** ${f.osType} | **Public Access:** ${f.publicNetworkAccess}
+${f.findings.map((fi: string) => `- ⚠️ ${fi}`).join("\n")}
+`).join("\n")}
+
+## All Disks
+\`\`\`json
+${JSON.stringify(diskFindings, null, 2)}
+\`\`\``;
+
+        return {
+          content: [{ type: "text", text: formatResponse(diskOutput, format, request.params.name) }],
         };
       }
 

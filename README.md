@@ -2,9 +2,9 @@
 
 # Stratos - Azure Security Assessment MCP Server
 
-[![Version](https://img.shields.io/badge/version-1.14.0-blue.svg)](https://github.com/h4cd0c/stratos-mcp)
+[![Version](https://img.shields.io/badge/version-1.15.0-blue.svg)](https://github.com/h4cd0c/stratos-mcp)
 [![Tests](https://img.shields.io/badge/tests-65%20passing-brightgreen.svg)](https://jestjs.io/)
-[![Tools](https://img.shields.io/badge/tools-40-green.svg)](https://github.com/h4cd0c/stratos-mcp)
+[![Tools](https://img.shields.io/badge/tools-43-green.svg)](https://github.com/h4cd0c/stratos-mcp)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
 [![Azure SDK](https://img.shields.io/badge/Azure%20SDK-v4+-yellow.svg)](https://azure.microsoft.com/en-us/downloads/)
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)](https://github.com/h4cd0c/stratos-mcp)

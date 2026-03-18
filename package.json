@@ -1,7 +1,7 @@
 {
   "name": "stratos-mcp",
-  "version": "1.14.0",
-  "description": "Stratos - Azure Security Assessment MCP Server - 40 Professional Security Tools (v1.14.0: Enhanced Storage SAS+WORM, RBAC Service Principals, Managed Identity Federation, NSG Service Endpoints, Multi-Database Support PostgreSQL/MySQL/Redis, Function Apps Event Grid/Service Bus, NEW: Backup Security, VNet Peering, Private Endpoints, Diagnostic Settings, Defender Coverage, Policy Compliance)",
+  "version": "1.15.0",
+  "description": "Stratos - Azure Security Assessment MCP Server - 43 Professional Security Tools (v1.15.0: Role Definitions, App Gateway WAF, Managed Disks, dead code removed)",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
